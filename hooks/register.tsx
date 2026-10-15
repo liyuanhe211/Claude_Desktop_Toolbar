@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, McpToolResult, Register } from 'claude-code'
 
-import type { RecentFolderList, SubagentRecord, UsageSnapshot, UsageWindow } from '../types'
+import type { MonitorRecord, RecentFolderList, SubagentRecord, UsageSnapshot, UsageWindow } from '../types'
 import {
   findFolder,
   folderIdentity,
@@ -43,6 +43,23 @@ import {
   subagentSummary,
   subagentText,
 } from './subagent_dots'
+import {
+  activeMonitors,
+  applyEndings,
+  expireMonitors,
+  isCountingSeconds,
+  mergeMonitorRecords,
+  monitorClocksSvg,
+  monitorClocksWidth,
+  monitorLines,
+  monitorSummary,
+  monitorText,
+  parseNotificationEndings,
+  parseTranscriptMonitors,
+  readMonitorStart,
+  recordMonitorEnd,
+  recordMonitorStart,
+} from './monitor_clock'
 
 type CopySurface = Parameters<EngineInterface['ui']['copy']>[0]['surface']
 
@@ -91,6 +108,12 @@ const TASKS_PANE_TOOL = 'show_pane'
 const OPEN_TASKS_GLYPH = '↗'
 // Lines the dots' tooltip lists below the summary, newest first.
 const SUBAGENT_TOOLTIP_LINE_LIMIT = 15
+// The main conversation's Monitors for the waiting clocks.
+const monitorsAtom = atom({ plugin: 'conversation-toolbar', key: 'monitors' } as const, [] as MonitorRecord[])
+// How often the clocks' tooltip (waited, stops in) is redrawn while one waits.
+// A waiting clock's countdown in minutes redraws this often; in its last
+// minute, every poll.
+const MONITOR_COUNTDOWN_REFRESH_MS = 10_000
 
 type MoveOutcome = { isMoved: true } | { isMoved: false; reason: string; isDeclined: boolean }
 
@@ -635,9 +658,75 @@ let subagentListTimer: ReturnType<EngineInterface['clock']['every']> | null = nu
 
 function ensureSubagentPolling($: EngineInterface): void {
   if (subagentListTimer === null) {
-    subagentListTimer = $.clock.every(SUBAGENT_LIST_INTERVAL_MS, () => void refreshSubagents($))
+    subagentListTimer = $.clock.every(SUBAGENT_LIST_INTERVAL_MS, () => {
+      void refreshSubagents($)
+      void checkMonitorDeadlines($)
+    })
     void refreshSubagents($)
   }
+  ensureMonitorBackfill($)
+}
+
+// Writes the clocks' records and asks for a redraw, as writeSubagents does.
+async function writeMonitors(
+  $: EngineInterface,
+  change: (records: MonitorRecord[]) => MonitorRecord[],
+): Promise<void> {
+  await update($, monitorsAtom, records => change(records ?? []))
+  $.ui.invalidate('ui.render')
+}
+
+// Module variables start over on a hot reload, and a Monitor started before
+// this module loaded raised no tool.call here: once per load, the transcript
+// gives the Monitors back.
+let monitorBackfill: Promise<void> | null = null
+
+function ensureMonitorBackfill($: EngineInterface): void {
+  if (monitorBackfill !== null) {
+    return
+  }
+  monitorBackfill = (async () => {
+    try {
+      const transcript = await $.fs.read(await resolveTranscriptPath($))
+      const nowMs = Date.now()
+      const parsed = expireMonitors(parseTranscriptMonitors(typeof transcript === 'string' ? transcript : '', nowMs), nowMs)
+      const current = (await read($, monitorsAtom)) ?? []
+      const merged = mergeMonitorRecords(current, parsed)
+      if (JSON.stringify(merged) !== JSON.stringify(current)) {
+        await writeMonitors($, () => merged)
+      }
+    } catch (error: unknown) {
+      $.ui.log(`Reading the Monitors from the transcript failed: ${describeError(error)}`, { to: 'debug' })
+    }
+  })()
+}
+
+let lastMonitorRedrawMs = 0
+
+// Ends the clocks past their deadline, and redraws a waiting clock now and
+// then so its countdown and tooltip move on.
+async function checkMonitorDeadlines($: EngineInterface): Promise<void> {
+  try {
+    const nowMs = Date.now()
+    const current = (await read($, monitorsAtom)) ?? []
+    const expired = expireMonitors(current, nowMs)
+    if (JSON.stringify(expired) !== JSON.stringify(current)) {
+      lastMonitorRedrawMs = nowMs
+      await writeMonitors($, records => expireMonitors(records, nowMs))
+    } else if (
+      activeMonitors(current).length > 0 &&
+      (isCountingSeconds(activeMonitors(current), nowMs) || nowMs - lastMonitorRedrawMs >= MONITOR_COUNTDOWN_REFRESH_MS)
+    ) {
+      lastMonitorRedrawMs = nowMs
+      $.ui.invalidate('ui.render')
+    }
+  } catch (error: unknown) {
+    $.ui.log(`Checking the Monitor deadlines failed: ${describeError(error)}`, { to: 'debug' })
+  }
+}
+
+function monitorTooltip(active: readonly MonitorRecord[], nowMs: number): string {
+  return [monitorSummary(active), ...monitorLines(active, nowMs)].join('\n')
 }
 
 // The desktop app's own pane of background tasks, opened through the app's
@@ -800,6 +889,44 @@ export const register: Register = on => {
     return result
   })
 
+  // A Monitor of the main conversation gets its waiting clock once the tool
+  // answers with its task id.
+  on('tool.call', { tool: 'Monitor' }, async ($, e, next) => {
+    ensureSubagentPolling($)
+    const ran = await next(e)
+    if (e.agentId === undefined && ran.deny === undefined && ran.isError !== true) {
+      const monitor = readMonitorStart(ran.result, e.description, Date.now())
+      if (monitor !== null) {
+        await writeMonitors($, records => recordMonitorStart(records, monitor)).catch(() => undefined)
+      }
+    }
+
+    return ran
+  })
+
+  on('tool.call', { tool: 'TaskStop' }, async ($, e, next) => {
+    const ran = await next(e)
+    const taskId = e.task_id ?? e.shell_id
+    if (e.agentId === undefined && taskId !== undefined && ran.deny === undefined && ran.isError !== true) {
+      await writeMonitors($, records => recordMonitorEnd(records, taskId, 'stopped', Date.now())).catch(() => undefined)
+    }
+
+    return ran
+  })
+
+  // A Monitor's last notification carries a status (completed, failed,
+  // killed...); its event notifications carry none.
+  on('prompt.submit', async ($, e, next) => {
+    if (e.origin.kind === 'task-notification') {
+      const endings = parseNotificationEndings(e.text)
+      if (endings.length > 0) {
+        await writeMonitors($, records => applyEndings(records, endings, Date.now())).catch(() => undefined)
+      }
+    }
+
+    return next(e)
+  })
+
   // A session moved by the desktop app, the model or this toolbar records its
   // new folder at the next turn boundary.
   on('turn.start', async ($, e, next) => {
@@ -876,8 +1003,13 @@ export const register: Register = on => {
     // One dot per subagent of this session, drawn once there is one; hovering
     // lists them. The terminal shows the counts as text.
     const subagents = (await read($, subagentsAtom)) ?? []
+    // A clock per Monitor still watching, left of the dots. A hot reload at an
+    // idle moment raises no turn: the first draw starts the poll and the
+    // transcript read (their writes come after this draw).
+    ensureSubagentPolling($)
+    const monitors = activeMonitors((await read($, monitorsAtom)) ?? [])
     let subagentIndicator = null
-    if (subagents.length > 0) {
+    if (subagents.length > 0 || monitors.length > 0) {
       // An Svg takes no press and a Button holds no Svg, so a one-glyph plain
       // button beside the dots opens the desktop app's background tasks pane.
       const openTasks = (
@@ -889,24 +1021,41 @@ export const register: Register = on => {
           onPress={() => void openBackgroundTasksPane($)}
         />
       )
+      const nowMs = Date.now()
       if (e.surface !== 'terminal' && 'Svg' in elements) {
         const { Svg } = elements
         subagentIndicator = (
           <Box key="subagent-dots" flexDirection="row" alignItems="center">
-            <Svg
-              source={subagentDotsSvg(subagents, subagentTooltip(subagents, Date.now()))}
-              alt={subagentSummary(subagents)}
-              width={subagentDotsWidth(subagents)}
-              height={DOTS_HEIGHT_PX}
-              isInteractive
-            />
+            {monitors.length > 0 ? (
+              <Box key="monitor-clocks">
+                <Svg
+                  source={monitorClocksSvg(monitors, monitorTooltip(monitors, nowMs), nowMs)}
+                  alt={monitorSummary(monitors)}
+                  width={monitorClocksWidth(monitors, nowMs)}
+                  height={DOTS_HEIGHT_PX}
+                  isInteractive
+                />
+              </Box>
+            ) : null}
+            {subagents.length > 0 ? (
+              <Box key="subagent-dot-row">
+                <Svg
+                  source={subagentDotsSvg(subagents, subagentTooltip(subagents, nowMs))}
+                  alt={subagentSummary(subagents)}
+                  width={subagentDotsWidth(subagents)}
+                  height={DOTS_HEIGHT_PX}
+                  isInteractive
+                />
+              </Box>
+            ) : null}
             {openTasks}
           </Box>
         )
       } else {
         subagentIndicator = (
           <Box key="subagent-dots" flexDirection="row" columnGap={1}>
-            <Text dimColor>{subagentText(subagents)}</Text>
+            {monitors.length > 0 ? <Text dimColor>{monitorText(monitors)}</Text> : null}
+            {subagents.length > 0 ? <Text dimColor>{subagentText(subagents)}</Text> : null}
             {openTasks}
           </Box>
         )

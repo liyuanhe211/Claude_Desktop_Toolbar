@@ -319,6 +319,38 @@ test('the dots appear on a mounted toolbar as soon as a subagent starts', async 
   await ui.unmount()
 })
 
+test('a waiting Monitor shows a blinking clock left of the dots until it is stopped', async ($, on) => {
+  mock.store(on, { recentFolders: STORED_FOLDERS, isSeededFromDesktopSessions: true })
+  mock.env(on, { APPDATA })
+  on('session.root', () => ({ value: 'E:\\Projects\\Alpha' }))
+  on('session.turns', () => ({ value: 1 }))
+  on('agent.list', () => ({ value: [] }))
+  on('tool.call', (_$, e) =>
+    e.tool === 'Monitor'
+      ? { result: { taskId: 'bmon1', timeoutMs: 1_800_000, persistent: false } }
+      : { result: { message: 'stopped', task_id: 'bmon1', task_type: 'local_bash' } },
+  )
+  const ui = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', ...BAND })
+  expect(await ui.find({ key: 'monitor-clocks' })).toBeUndefined()
+
+  await $.tool.call({ tool: 'Monitor', description: 'round-29 harvest', timeout_ms: 1_800_000, command: 'python watch.py' })
+  const drawn = JSON.stringify(await ui.drawn())
+  expect(drawn).toContain('"alt":"Waiting on 1 monitor"')
+  expect(drawn).toContain('Monitor: round-29 harvest (waiting')
+  expect(drawn).toContain('dur=\\"2.4s\\"')
+  expect(drawn).toContain('>30m</text>')
+  expect(drawn).toContain('open-background-tasks')
+
+  await $.tool.call({ tool: 'TaskStop', task_id: 'bmon1' })
+  expect(await ui.find({ key: 'monitor-clocks' })).toBeUndefined()
+  await ui.unmount()
+
+  await $.tool.call({ tool: 'Monitor', description: 'round-29 harvest', timeout_ms: 1_800_000, command: 'python watch.py' })
+  const terminal = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...BAND })
+  expect(JSON.stringify(await terminal.drawn())).toContain('Monitors 1 waiting')
+  await terminal.unmount()
+})
+
 const USAGE = {
   startedAt: 0,
   context: { tokens: 110_000, window: 1_000_000, percent: 11 },

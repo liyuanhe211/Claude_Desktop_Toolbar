@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.13.0 — 2026-10-15
+
+- Each waiting clock shows the time left before its Monitor expires on its right: whole minutes rounded up (`12m`), seconds in the last minute (`45s`), `∞` for a Monitor without a deadline. The countdown redraws every 10 s, and every 2 s in the last minute.
+- The clock blinks slower, at 1/2 of a running dot's rate (2.4 s instead of 1.8 s).
+
+## 0.12.0 — 2026-10-15
+
+- A conversation waiting on a Monitor no longer looks finished: an orange clock blinks left of the subagent dots for every Monitor still watching, at 2/3 of a running dot's rate (1.8 s instead of 1.2 s). Hover for each Monitor's description, how long it has waited and when it stops. The clock goes when the Monitor ends, is stopped, or passes its deadline; the terminal shows `Monitors 1 waiting`. The `↗` button beside it opens the Background tasks pane.
+- A Monitor started before the toolbar loaded (or before a reload) is read back from the conversation transcript.
+
 ## 0.11.0 — 2026-10-15
 
 - A `↗` button right of the subagent dots opens the desktop app's **Background tasks** pane (the terminal shows a toast instead). The dots themselves take no click: an SVG takes no press and a button holds no SVG.

@@ -150,7 +150,7 @@ export function subagentSummary(records: readonly SubagentRecord[]): string {
   return `Subagents: ${parts.join(', ')}`
 }
 
-function formatElapsed(durationMs: number): string {
+export function formatElapsed(durationMs: number): string {
   const seconds = Math.max(0, Math.round(durationMs / 1000))
   if (seconds < 60) {
     return `${seconds} s`
@@ -170,7 +170,7 @@ export function subagentLines(records: readonly SubagentRecord[], nowMs: number)
   })
 }
 
-function escapeXml(text: string): string {
+export function escapeXml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 

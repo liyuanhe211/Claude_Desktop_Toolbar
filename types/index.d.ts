@@ -25,6 +25,19 @@ export type SubagentRecord = {
   hasBeenListed: boolean
 }
 
+// A Monitor the main conversation started: active until its end notification,
+// a TaskStop, or its deadline (absent for a persistent one) passes.
+export type MonitorRecord = {
+  id: string
+  description: string
+  startedAtMs: number
+  deadlineMs?: number
+  endedAtMs?: number
+  // How it ended: the notification's status (completed, failed, killed...),
+  // `stopped` for a TaskStop, `expired` past its deadline.
+  outcome?: string
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'conversation-toolbar': {
@@ -39,6 +52,8 @@ declare module 'claude-code' {
       // This session's subagents in launch order, at most 50, kept after the
       // engine drops them from `$.agent.list()`.
       subagents: SubagentRecord[]
+      // This session's Monitors, at most 20, the newest last.
+      monitors: MonitorRecord[]
     }
   }
 }
