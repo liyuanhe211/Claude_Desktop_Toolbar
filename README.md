@@ -1,6 +1,6 @@
 # Conversation Toolbar
 
-A Claude Code plugin (a hooks-module mod) that draws one row above the prompt, in the Claude desktop app's Code tab and in the terminal: a recent-folder list, a button that copies the transcript path, and live usage widgets for the context window and the plan's rate limits.
+A Claude Code plugin (a hooks-module mod) that draws one row above the prompt, in the Claude desktop app's Code tab and in the terminal: a recent-folder list, status dots for the conversation's subagents, a button that copies the transcript path, and live usage widgets for the context window and the plan's rate limits.
 
 ## Features
 
@@ -8,6 +8,7 @@ A Claude Code plugin (a hooks-module mod) that draws one row above the prompt, i
 | --- | --- |
 | Folder list | Shows the current folder by its name alone (`my-project`; "No folder" in a scratch workspace) and lists the most recently used folders: the 64 newest of the 100 the plugin remembers, because Claude Code refuses a Select with more options. Picking one starts the conversation there before the first prompt, or moves the session there afterwards. A name too long for the row keeps its end behind an ellipsis. |
 | **Browse…** (last entry of the folder list) | Opens the Windows folder picker at the most recently used folder rather than the user profile. The picked folder is used and recorded the same way. |
+| Subagent dots | One dot per subagent of this conversation, oldest left, shown once the first one starts. Running dots pulse in orange, one after another; finished ones are green, failed ones red, stopped ones a grey ring (also a subagent that ended without a known result). A subagent that waits is a slowly pulsing orange ring, a teammate between turns a still one. Hover for a summary and one line per subagent, newest first: state, type, task and duration. The newest 12 show, `+n` counting the older ones; the history keeps 50. |
 | **Copy Transcript Path** | Copies the path of this conversation's transcript (`.jsonl`) to the clipboard. Also available as `/copy-transcript-path`. |
 | Usage widgets (right end) | Left to right: a ring for the model's weekly quota (for example Fable), the token count, a context bar full at 500k tokens, a ring for the 5-hour limit and a ring for the weekly limit. Each ring shows its whole percentage inside. |
 
@@ -64,6 +65,7 @@ To run a local copy instead, name its folder in `CLAUDE_CODE_PLUGIN_DIRS` in the
 - `.claude-plugin/marketplace.json`: makes this repository a one-plugin marketplace
 - `hooks/register.tsx`: the hooks: session start, turn boundaries, the slash commands, and the row above the prompt
 - `hooks/folder_list.ts`: path handling and the recent-folder list, with no engine calls
+- `hooks/subagent_dots.ts`: the subagent records and their dots, with no engine calls
 - `hooks/usage_wheels.ts`: the usage figures, their text and the SVG rings and bar, with no engine calls
 - `scripts/Pick_Folder.ps1`: the folder picker Browse runs
 - `types/index.d.ts`: the `$.state` contract

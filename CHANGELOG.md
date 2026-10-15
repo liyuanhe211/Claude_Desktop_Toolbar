@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.0 — 2026-10-15
+
+- Subagent dots between the folder list and **Copy Transcript Path**: one dot per subagent of the conversation, in launch order. A running subagent's dot pulses in orange; a finished one stays green, a failed one red, a stopped one a grey ring. Hover for a summary and one line per subagent with its type, task and duration. The newest 12 dots show, with `+n` for older ones; the terminal shows the counts as text.
+- A subagent finishing no longer counts as the end of the main conversation's turn for the usage rings and the folder bookkeeping.
+
 ## 0.9.4 — 2026-10-15
 
 - Tried and withdrawn: submitting a short turn from the toolbar itself so that an idle conversation moves right away. The desktop app applies a move only at a turn you send, not one a plugin submits, so the turn cost quota and moved nothing. An idle conversation still shows `Moving after your next message...` and waits.

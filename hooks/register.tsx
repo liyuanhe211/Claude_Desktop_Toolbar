@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, McpToolResult, Register } from 'claude-code'
 
-import type { RecentFolderList, UsageSnapshot, UsageWindow } from '../types'
+import type { RecentFolderList, SubagentRecord, UsageSnapshot, UsageWindow } from '../types'
 import {
   findFolder,
   folderIdentity,
@@ -32,6 +32,17 @@ import {
   usageText,
   usageWidgets,
 } from './usage_wheels'
+import {
+  DOTS_HEIGHT_PX,
+  mergeListedAgents,
+  recordSpawn,
+  recordTurnEnd,
+  subagentDotsSvg,
+  subagentDotsWidth,
+  subagentLines,
+  subagentSummary,
+  subagentText,
+} from './subagent_dots'
 
 type CopySurface = Parameters<EngineInterface['ui']['copy']>[0]['surface']
 
@@ -69,6 +80,11 @@ const pendingMoveAtom = atom({ plugin: 'conversation-toolbar', key: 'pendingMove
 const movingDotsAtom = atom({ plugin: 'conversation-toolbar', key: 'movingDots' } as const, 1)
 const MOVING_DOTS_MAXIMUM = 6
 const MOVING_DOTS_INTERVAL_MS = 400
+// This session's subagents for the dots, refreshed from `$.agent.list()`.
+const subagentsAtom = atom({ plugin: 'conversation-toolbar', key: 'subagents' } as const, [] as SubagentRecord[])
+const SUBAGENT_LIST_INTERVAL_MS = 2_000
+// Lines the dots' tooltip lists below the summary, newest first.
+const SUBAGENT_TOOLTIP_LINE_LIMIT = 15
 
 type MoveOutcome = { isMoved: true } | { isMoved: false; reason: string; isDeclined: boolean }
 
@@ -581,6 +597,28 @@ async function refreshSessionUsage($: EngineInterface): Promise<void> {
   await publishUsage($)
 }
 
+// Takes the engine's agent list into the dots' records, writing only when a
+// state changed so a quiet session does not redraw.
+async function refreshSubagents($: EngineInterface): Promise<void> {
+  try {
+    const listed = await $.agent.list()
+    const nowMs = Date.now()
+    const current = (await read($, subagentsAtom)) ?? []
+    if (JSON.stringify(mergeListedAgents(current, listed, nowMs)) !== JSON.stringify(current)) {
+      await update($, subagentsAtom, records => mergeListedAgents(records ?? [], listed, nowMs))
+    }
+  } catch (error: unknown) {
+    $.ui.log(`Reading the subagent list failed: ${describeError(error)}`, { to: 'debug' })
+  }
+}
+
+function subagentTooltip(records: readonly SubagentRecord[], nowMs: number): string {
+  const lines = subagentLines(records, nowMs)
+  const shown = lines.slice(0, SUBAGENT_TOOLTIP_LINE_LIMIT)
+  const more = lines.length > shown.length ? [`… ${lines.length - shown.length} more`] : []
+  return [subagentSummary(records), ...shown, ...more].join('\n')
+}
+
 // The usage widgets, left to right: the model's weekly ring (Fable), the
 // context bar and its token count (a button that pins the detail row open),
 // the 5-hour ring and the weekly ring, each ring drawn alike. Hovering a
@@ -701,8 +739,23 @@ export const register: Register = on => {
     $.clock.every(USAGE_ENDPOINT_INTERVAL_MS, () =>
       void refreshUsageEndpoint($, USAGE_ENDPOINT_INTERVAL_MS - 5_000).then(() => publishUsage($)),
     )
+    // The subagent dots follow the engine's agent list (a local read).
+    void refreshSubagents($)
+    $.clock.every(SUBAGENT_LIST_INTERVAL_MS, () => void refreshSubagents($))
 
     return next(e)
+  })
+
+  // A started subagent gets its dot at once, before the next list read.
+  on('agent.spawn', async ($, e, next) => {
+    const result = await next(e)
+    const agentId = result.agentId
+    if (agentId !== undefined) {
+      const agent = { id: agentId, description: e.description, type: e.subagentType }
+      await update($, subagentsAtom, records => recordSpawn(records ?? [], agent, Date.now())).catch(() => undefined)
+    }
+
+    return result
   })
 
   // A session moved by the desktop app, the model or this toolbar records its
@@ -716,6 +769,17 @@ export const register: Register = on => {
   })
 
   on('turn.complete', async ($, e, next) => {
+    // A subagent's run ends in a turn.complete of its own: its dot takes the
+    // outcome; the main loop's turn state is untouched.
+    const agentId = e.agentId
+    if (agentId !== undefined) {
+      const result = await next(e)
+      await update($, subagentsAtom, records => recordTurnEnd(records ?? [], agentId, e.reason, Date.now())).catch(
+        () => undefined,
+      )
+
+      return result
+    }
     isTurnRunning = false
     lastTurnCompletedAtMs = Date.now()
     const result = await next(e)
@@ -768,10 +832,37 @@ export const register: Register = on => {
     const usage = (await read($, usageAtom)) ?? (await composeUsage($).catch(() => null))
     const modelId = await $.session.model().catch(() => '')
     const usageParts = usageElements($, e, usageWidgets(usage, Date.now(), modelId), await read($, usageDetailsPinnedAtom))
+    // One dot per subagent of this session, drawn once there is one; hovering
+    // lists them. The terminal shows the counts as text.
+    const subagents = (await read($, subagentsAtom)) ?? []
+    let subagentIndicator = null
+    if (subagents.length > 0) {
+      if (e.surface !== 'terminal' && 'Svg' in elements) {
+        const { Svg } = elements
+        subagentIndicator = (
+          <Box key="subagent-dots">
+            <Svg
+              source={subagentDotsSvg(subagents, subagentTooltip(subagents, Date.now()))}
+              alt={subagentSummary(subagents)}
+              width={subagentDotsWidth(subagents)}
+              height={DOTS_HEIGHT_PX}
+              isInteractive
+            />
+          </Box>
+        )
+      } else {
+        subagentIndicator = (
+          <Text key="subagent-dots" dimColor>
+            {subagentText(subagents)}
+          </Text>
+        )
+      }
+    }
     if (!('Select' in elements)) {
       return (
         <Box flexDirection="column">
           <Box flexDirection="row" columnGap={1}>
+            {subagentIndicator}
             {copyButton}
             {usageParts.row}
           </Box>
@@ -825,7 +916,7 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column" width="100%">
       <Box flexDirection="row" justifyContent="space-between" columnGap={1} width="100%">
-        <Box flexDirection="row" columnGap={1}>
+        <Box flexDirection="row" columnGap={1} alignItems="center">
           <Select
             key="recent-folders"
             options={options}
@@ -840,6 +931,7 @@ export const register: Register = on => {
             }}
           />
           {pendingMoveNote}
+          {subagentIndicator}
         </Box>
         <Box flexDirection="row" columnGap={2} alignItems="center">
           {copyButton}

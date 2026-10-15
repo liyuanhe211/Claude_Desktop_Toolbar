@@ -260,6 +260,36 @@ test('the toolbar yields while an agent transcript is in view', async ($, on) =>
   await ui.unmount()
 })
 
+test('subagent dots sit right of the folder list and left of Copy Transcript Path, one per subagent', async ($, on) => {
+  mock.store(on, { recentFolders: STORED_FOLDERS, isSeededFromDesktopSessions: true })
+  mock.env(on, { APPDATA })
+  on('session.root', () => ({ value: 'E:\\Projects\\Alpha' }))
+  on('session.turns', () => ({ value: 1 }))
+  on('agent.list', () => ({ value: [] }))
+  let nextId = 1
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: `agent-${nextId++}` }))
+  on('turn.complete', () => ({ text: '' }))
+  const before = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', ...BAND })
+  expect(await before.find({ key: 'subagent-dots' })).toBeUndefined()
+  await before.unmount()
+
+  await $.agent.spawn({ prompt: 'Read README.md.', description: 'Read the readme', subagentType: 'Explore' })
+  await $.agent.spawn({ prompt: 'Run the tests.', description: 'Run the tests', subagentType: 'general-purpose' })
+  await $.turn.complete({ agentId: 'agent-2', answer: '', durationMs: 1000, isAborted: false, turnId: 't', reason: 'error' })
+
+  const ui = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', ...BAND })
+  const drawn = JSON.stringify(await ui.drawn())
+  expect(drawn.indexOf('subagent-dots')).toBeGreaterThan(drawn.indexOf('recent-folders'))
+  expect(drawn.indexOf('copy-transcript-path')).toBeGreaterThan(drawn.indexOf('subagent-dots'))
+  expect(drawn).toContain('"alt":"Subagents: 1 running, 1 failed"')
+  expect(drawn).toContain('Failed  general-purpose: Run the tests')
+  await ui.unmount()
+
+  const terminal = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...BAND })
+  expect(JSON.stringify(await terminal.drawn())).toContain('Agents 1 running · 1 failed')
+  await terminal.unmount()
+})
+
 const USAGE = {
   startedAt: 0,
   context: { tokens: 110_000, window: 1_000_000, percent: 11 },

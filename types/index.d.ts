@@ -10,6 +10,21 @@ export type UsageSnapshot = {
   rateLimits: UsageWindow[]
 }
 
+// A subagent as the dots draw it: running, waiting (held) or idle (a teammate
+// between turns) while active; completed, failed or stopped once ended.
+export type SubagentState = 'running' | 'waiting' | 'idle' | 'completed' | 'failed' | 'stopped'
+
+export type SubagentRecord = {
+  id: string
+  description: string
+  type: string
+  state: SubagentState
+  startedAtMs: number
+  endedAtMs?: number
+  // Whether `$.agent.list()` has listed it; one listed and then gone ended unseen.
+  hasBeenListed: boolean
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'conversation-toolbar': {
@@ -21,6 +36,9 @@ declare module 'claude-code' {
       pendingMove: string | null
       // How many dots the pending-move note draws now, 1 to 6, cycling.
       movingDots: number
+      // This session's subagents in launch order, at most 50, kept after the
+      // engine drops them from `$.agent.list()`.
+      subagents: SubagentRecord[]
     }
   }
 }
