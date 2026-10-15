@@ -269,6 +269,12 @@ test('subagent dots sit right of the folder list and left of Copy Transcript Pat
   let nextId = 1
   on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: `agent-${nextId++}` }))
   on('turn.complete', () => ({ text: '' }))
+  // The button beside the dots opens the desktop app's background tasks pane.
+  const paneCalls: { server: string; tool: string; args: Record<string, unknown> }[] = []
+  on('mcp.call', (_$, e) => {
+    paneCalls.push({ server: e.server, tool: e.tool, args: e.args })
+    return { value: { content: [{ type: 'text', text: 'shown' }], isError: false } }
+  })
   const before = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', ...BAND })
   expect(await before.find({ key: 'subagent-dots' })).toBeUndefined()
   await before.unmount()
@@ -283,11 +289,34 @@ test('subagent dots sit right of the folder list and left of Copy Transcript Pat
   expect(drawn.indexOf('copy-transcript-path')).toBeGreaterThan(drawn.indexOf('subagent-dots'))
   expect(drawn).toContain('"alt":"Subagents: 1 running, 1 failed"')
   expect(drawn).toContain('Failed  general-purpose: Run the tests')
+  await ui.press({ key: 'open-background-tasks' })
+  expect(paneCalls).toEqual([{ server: 'ccd_view', tool: 'show_pane', args: { pane: 'tasks' } }])
   await ui.unmount()
 
   const terminal = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...BAND })
-  expect(JSON.stringify(await terminal.drawn())).toContain('Agents 1 running · 1 failed')
+  const terminalDrawn = JSON.stringify(await terminal.drawn())
+  expect(terminalDrawn).toContain('Agents 1 running · 1 failed')
+  expect(terminalDrawn).toContain('open-background-tasks')
   await terminal.unmount()
+})
+
+test('the dots appear on a mounted toolbar as soon as a subagent starts', async ($, on) => {
+  mock.store(on, { recentFolders: STORED_FOLDERS, isSeededFromDesktopSessions: true })
+  mock.env(on, { APPDATA })
+  on('session.root', () => ({ value: 'E:\\Projects\\Alpha' }))
+  on('session.turns', () => ({ value: 1 }))
+  on('agent.list', () => ({ value: [] }))
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'agent-live' }))
+  on('turn.complete', () => ({ text: '' }))
+  const ui = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', ...BAND })
+  expect(await ui.find({ key: 'subagent-dots' })).toBeUndefined()
+
+  await $.agent.spawn({ prompt: 'Read README.md.', description: 'Read the readme', subagentType: 'Explore' })
+  expect(JSON.stringify(await ui.drawn())).toContain('"alt":"Subagents: 1 running"')
+
+  await $.turn.complete({ agentId: 'agent-live', answer: '', durationMs: 1000, isAborted: false, turnId: 't', reason: 'answer' })
+  expect(JSON.stringify(await ui.drawn())).toContain('"alt":"Subagents: 1 completed"')
+  await ui.unmount()
 })
 
 const USAGE = {

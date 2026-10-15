@@ -83,6 +83,12 @@ const MOVING_DOTS_INTERVAL_MS = 400
 // This session's subagents for the dots, refreshed from `$.agent.list()`.
 const subagentsAtom = atom({ plugin: 'conversation-toolbar', key: 'subagents' } as const, [] as SubagentRecord[])
 const SUBAGENT_LIST_INTERVAL_MS = 2_000
+// The desktop app's session view server and its pane tool.
+const TASKS_PANE_SERVER = 'ccd_view'
+const TASKS_PANE_TOOL = 'show_pane'
+// The button beside the dots that opens the pane: an arrow out to the pane
+// (a math-axis glyph, so it sits on the dots' centre line; the trigram ☰ sat above it).
+const OPEN_TASKS_GLYPH = '↗'
 // Lines the dots' tooltip lists below the summary, newest first.
 const SUBAGENT_TOOLTIP_LINE_LIMIT = 15
 
@@ -605,10 +611,46 @@ async function refreshSubagents($: EngineInterface): Promise<void> {
     const nowMs = Date.now()
     const current = (await read($, subagentsAtom)) ?? []
     if (JSON.stringify(mergeListedAgents(current, listed, nowMs)) !== JSON.stringify(current)) {
-      await update($, subagentsAtom, records => mergeListedAgents(records ?? [], listed, nowMs))
+      await writeSubagents($, records => mergeListedAgents(records, listed, nowMs))
     }
   } catch (error: unknown) {
     $.ui.log(`Reading the subagent list failed: ${describeError(error)}`, { to: 'debug' })
+  }
+}
+
+// Writes the dots' records and asks for a redraw: the desktop app does not
+// redraw the band on the state change alone, so a dot would wait for the
+// next unrelated redraw (a usage figure, a turn boundary).
+async function writeSubagents(
+  $: EngineInterface,
+  change: (records: SubagentRecord[]) => SubagentRecord[],
+): Promise<void> {
+  await update($, subagentsAtom, records => change(records ?? []))
+  $.ui.invalidate('ui.render')
+}
+
+// Module variables start over on a hot reload, which does not run
+// session.start again; every turn boundary makes sure the list is polled.
+let subagentListTimer: ReturnType<EngineInterface['clock']['every']> | null = null
+
+function ensureSubagentPolling($: EngineInterface): void {
+  if (subagentListTimer === null) {
+    subagentListTimer = $.clock.every(SUBAGENT_LIST_INTERVAL_MS, () => void refreshSubagents($))
+    void refreshSubagents($)
+  }
+}
+
+// The desktop app's own pane of background tasks, opened through the app's
+// session MCP server; a surface without it (the terminal) gets a toast.
+async function openBackgroundTasksPane($: EngineInterface): Promise<void> {
+  try {
+    const result = await $.mcp.call(TASKS_PANE_SERVER, TASKS_PANE_TOOL, { pane: 'tasks' })
+    if (result.isError) {
+      const text = result.content.find(block => block.type === 'text')?.text ?? 'the app refused'
+      $.ui.toast(`Could not open the background tasks pane: ${text}`)
+    }
+  } catch (error: unknown) {
+    $.ui.toast(`Could not open the background tasks pane: ${describeError(error)}`)
   }
 }
 
@@ -740,19 +782,19 @@ export const register: Register = on => {
       void refreshUsageEndpoint($, USAGE_ENDPOINT_INTERVAL_MS - 5_000).then(() => publishUsage($)),
     )
     // The subagent dots follow the engine's agent list (a local read).
-    void refreshSubagents($)
-    $.clock.every(SUBAGENT_LIST_INTERVAL_MS, () => void refreshSubagents($))
+    ensureSubagentPolling($)
 
     return next(e)
   })
 
   // A started subagent gets its dot at once, before the next list read.
   on('agent.spawn', async ($, e, next) => {
+    ensureSubagentPolling($)
     const result = await next(e)
     const agentId = result.agentId
     if (agentId !== undefined) {
       const agent = { id: agentId, description: e.description, type: e.subagentType }
-      await update($, subagentsAtom, records => recordSpawn(records ?? [], agent, Date.now())).catch(() => undefined)
+      await writeSubagents($, records => recordSpawn(records, agent, Date.now())).catch(() => undefined)
     }
 
     return result
@@ -762,6 +804,7 @@ export const register: Register = on => {
   // new folder at the next turn boundary.
   on('turn.start', async ($, e, next) => {
     isTurnRunning = true
+    ensureSubagentPolling($)
     await recordCurrentFolder($).catch(() => undefined)
     await settlePendingMove($).catch(() => undefined)
 
@@ -774,9 +817,7 @@ export const register: Register = on => {
     const agentId = e.agentId
     if (agentId !== undefined) {
       const result = await next(e)
-      await update($, subagentsAtom, records => recordTurnEnd(records ?? [], agentId, e.reason, Date.now())).catch(
-        () => undefined,
-      )
+      await writeSubagents($, records => recordTurnEnd(records, agentId, e.reason, Date.now())).catch(() => undefined)
 
       return result
     }
@@ -837,10 +878,21 @@ export const register: Register = on => {
     const subagents = (await read($, subagentsAtom)) ?? []
     let subagentIndicator = null
     if (subagents.length > 0) {
+      // An Svg takes no press and a Button holds no Svg, so a one-glyph plain
+      // button beside the dots opens the desktop app's background tasks pane.
+      const openTasks = (
+        <Button
+          key="open-background-tasks"
+          label={OPEN_TASKS_GLYPH}
+          plain
+          dimColor
+          onPress={() => void openBackgroundTasksPane($)}
+        />
+      )
       if (e.surface !== 'terminal' && 'Svg' in elements) {
         const { Svg } = elements
         subagentIndicator = (
-          <Box key="subagent-dots">
+          <Box key="subagent-dots" flexDirection="row" alignItems="center">
             <Svg
               source={subagentDotsSvg(subagents, subagentTooltip(subagents, Date.now()))}
               alt={subagentSummary(subagents)}
@@ -848,13 +900,15 @@ export const register: Register = on => {
               height={DOTS_HEIGHT_PX}
               isInteractive
             />
+            {openTasks}
           </Box>
         )
       } else {
         subagentIndicator = (
-          <Text key="subagent-dots" dimColor>
-            {subagentText(subagents)}
-          </Text>
+          <Box key="subagent-dots" flexDirection="row" columnGap={1}>
+            <Text dimColor>{subagentText(subagents)}</Text>
+            {openTasks}
+          </Box>
         )
       }
     }

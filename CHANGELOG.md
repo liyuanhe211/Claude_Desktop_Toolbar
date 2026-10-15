@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.0 — 2026-10-15
+
+- A `↗` button right of the subagent dots opens the desktop app's **Background tasks** pane (the terminal shows a toast instead). The dots themselves take no click: an SVG takes no press and a button holds no SVG.
+- Dots now appear and change the moment a subagent starts or ends. Before, the desktop app redrew the toolbar only on an unrelated change (a usage figure, the end of a turn), so the dots lagged behind and could miss subagents.
+- The 2-second poll of the agent list restarts after a hot reload of the plugin folder, which does not run `session.start` again.
+
 ## 0.10.0 — 2026-10-15
 
 - Subagent dots between the folder list and **Copy Transcript Path**: one dot per subagent of the conversation, in launch order. A running subagent's dot pulses in orange; a finished one stays green, a failed one red, a stopped one a grey ring. Hover for a summary and one line per subagent with its type, task and duration. The newest 12 dots show, with `+n` for older ones; the terminal shows the counts as text.
