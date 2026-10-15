@@ -2,6 +2,8 @@
 
 A Claude Code plugin (a hooks-module mod) that draws one row above the prompt, in the Claude desktop app's Code tab and in the terminal: a recent-folder list, status dots for the conversation's subagents, a button that copies the transcript path, and live usage widgets for the context window and the plan's rate limits.
 
+![The toolbar above the prompt: subagents finishing, the context growing, a ring's tooltip, the pinned details, Copy Transcript Path and the folder list](docs/Toolbar_Preview.svg)
+
 ## Features
 
 | Control | What it does |
