@@ -1,0 +1,9 @@
+{
+  "name": "conversation-toolbar",
+  "version": "0.9.0",
+  "description": "A toolbar above the prompt: open or move the conversation to one of the 100 most recent folders, browse for a folder, copy the transcript path, usage widgets (model weekly ring, context bar, 5-hour ring, weekly ring); /folder <name> does the same from the first message",
+  "author": { "name": "Yuanhe Li" },
+  "license": "MIT",
+  "keywords": ["toolbar", "folders", "transcript", "usage", "rate-limits", "context", "windows", "desktop"],
+  "types": "./types/index.d.ts"
+}

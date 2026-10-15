@@ -1,0 +1,6 @@
+{
+  "name": "conversation-toolbar",
+  "description": "Conversation Toolbar: a row above the Claude Code prompt with recent folders, Copy Transcript Path, and live context and rate-limit widgets",
+  "owner": { "name": "Yuanhe Li" },
+  "plugins": [{ "name": "conversation-toolbar", "source": "./" }]
+}
