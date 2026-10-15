@@ -427,11 +427,19 @@ export function parseUsageEndpoint(body: unknown): UsageWindow[] {
   return windows
 }
 
-// The engine's own readings (response headers) first where they name the same
-// window, since they come with every response; the endpoint adds the rest.
-export function mergeWindows(fromSession: readonly UsageWindow[], fromEndpoint: readonly UsageWindow[]): UsageWindow[] {
-  const kinds = new Set(fromSession.map(window => window.kind))
-  return [...fromSession, ...fromEndpoint.filter(window => !kinds.has(window.kind))]
+// Where both name the same window the fresher reading wins: the engine's own
+// (response headers) only while its responses are newer than the endpoint's
+// answer, since an idle or finished session keeps its last turn's figures for
+// good. The other source adds the windows the first lacks.
+export function mergeWindows(
+  fromSession: readonly UsageWindow[],
+  fromEndpoint: readonly UsageWindow[],
+  sessionReadAtMs: number,
+  endpointFetchedAtMs: number,
+): UsageWindow[] {
+  const [first, second] = endpointFetchedAtMs > sessionReadAtMs ? [fromEndpoint, fromSession] : [fromSession, fromEndpoint]
+  const kinds = new Set(first.map(window => window.kind))
+  return [...first, ...second.filter(window => !kinds.has(window.kind))]
 }
 
 const DETAIL_FONT_SIZE_PX = 12

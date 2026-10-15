@@ -95,9 +95,17 @@ test('picking a folder moves the session there and records it first', async ($, 
 
     return { value: { content: [{ type: 'text', text: 'Moved' }], isError: false } }
   })
+  const toasts: string[] = []
+  on('ui.toast', ($, e) => {
+    toasts.push(e.text)
+
+    return { value: undefined }
+  })
   const ui = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', ...BAND })
   expect(await ui.find({ key: 'pending-move' })).toBeUndefined()
   await ui.select({ key: 'recent-folders', value: 'E:\\Projects\\Beta' })
+  // The pending-move note says it; no toast repeats it.
+  expect(toasts).toEqual([])
   expect(moves).toEqual([
     { server: 'ccd_directory', tool: 'change_directory', args: { path: 'E:\\Projects\\Beta' } },
   ])
@@ -117,6 +125,53 @@ test('picking a folder moves the session there and records it first', async ($, 
   const moved = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', ...BAND })
   expect(await moved.find({ key: 'pending-move' })).toBeUndefined()
   await moved.unmount()
+})
+
+// A turn the plugin submits does not make the desktop app apply the move, so
+// an idle conversation waits for the person's next message.
+test('a move in an idle conversation waits for the next message without starting a turn', async ($, on) => {
+  mock.store(on, { recentFolders: STORED_FOLDERS, isSeededFromDesktopSessions: true })
+  mock.env(on, { APPDATA })
+  const session = mock.session(on)
+  on('session.root', () => ({ value: 'E:\\Projects\\Alpha' }))
+  on('session.turns', () => ({ value: 4 }))
+  on('mcp.call', () => ({ value: { content: [{ type: 'text', text: 'Moved' }], isError: false } }))
+  const submitted: string[] = []
+  on('prompt.submit', ($, e) => {
+    submitted.push(e.text)
+
+    return { text: e.text }
+  })
+  const ui = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', ...BAND })
+  await ui.select({ key: 'recent-folders', value: 'E:\\Projects\\Beta' })
+  expect(submitted).toEqual([])
+  expect(session.appended()).toEqual([])
+  expect(JSON.stringify(await ui.find({ key: 'pending-move' }))).toContain('Moving after your next message.')
+  await ui.unmount()
+})
+
+test('a move during a turn waits for it without starting another', async ($, on) => {
+  mock.store(on, { recentFolders: STORED_FOLDERS, isSeededFromDesktopSessions: true })
+  mock.env(on, { APPDATA })
+  on('session.root', () => ({ value: 'E:\\Projects\\Alpha' }))
+  on('session.turns', () => ({ value: 4 }))
+  on('mcp.call', () => ({ value: { content: [{ type: 'text', text: 'Moved' }], isError: false } }))
+  const submitted: string[] = []
+  on('prompt.submit', ($, e) => {
+    submitted.push(e.text)
+
+    return { text: e.text }
+  })
+  const ui = await $.ui.mount({
+    plugin: PLUGIN,
+    surface: 'desktop',
+    ...BAND,
+    props: { ...BAND.props, isWorking: true },
+  })
+  await ui.select({ key: 'recent-folders', value: 'E:\\Projects\\Beta' })
+  expect(submitted).toEqual([])
+  expect(JSON.stringify(await ui.find({ key: 'pending-move' }))).toContain('Moving when this turn ends.')
+  await ui.unmount()
 })
 
 test('a move refused during a turn leaves the model a note to move afterwards', async ($, on) => {
@@ -155,8 +210,16 @@ test('a declined move leaves no note', async ($, on) => {
   on('mcp.call', () => ({
     value: { content: [{ type: 'text', text: 'The user declined' }], isError: true },
   }))
+  const toasts: string[] = []
+  on('ui.toast', ($, e) => {
+    toasts.push(e.text)
+
+    return { value: undefined }
+  })
   const ui = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', ...BAND })
   await ui.select({ key: 'recent-folders', value: 'E:\\Projects\\Beta' })
+  // The toolbar does not show a declined move, so a toast does.
+  expect(toasts).toEqual(['The move to E:\\Projects\\Beta was declined'])
   expect(session.appended()).toEqual([])
   expect(await ui.find({ key: 'pending-move' })).toBeUndefined()
   await ui.unmount()
@@ -210,8 +273,11 @@ test('the usage widgets sit at the right end: Fable ring, count then context bar
   mock.store(on, {
     recentFolders: STORED_FOLDERS,
     isSeededFromDesktopSessions: true,
-    // What another session's last endpoint read left in the shared cache.
-    usageEndpoint: { fetchedAtMs: Date.now(), windows: [{ kind: 'model_weekly:Fable', percentUsed: 50, resetsAt: '2099-01-01T00:00:00Z' }] },
+    // An endpoint read left in the shared cache after this session started.
+    usageEndpoint: {
+      fetchedAtMs: Date.now() + 60_000,
+      windows: [{ kind: 'model_weekly:Fable', percentUsed: 50, resetsAt: '2099-01-01T00:00:00Z' }],
+    },
   })
   mock.env(on, { APPDATA })
   on('session.root', () => ({ value: 'E:\\Projects\\Alpha' }))
@@ -239,6 +305,24 @@ test('the usage widgets sit at the right end: Fable ring, count then context bar
   expect(pinned).not.toContain('"display":"none"')
   await ui.press({ key: 'usage-details' })
   expect(JSON.stringify(await ui.drawn())).not.toContain('usage-detail-row')
+  await ui.unmount()
+})
+
+test('an endpoint answer cached before this session started is not shown, since it may be another account', async ($, on) => {
+  mock.store(on, {
+    recentFolders: STORED_FOLDERS,
+    isSeededFromDesktopSessions: true,
+    usageEndpoint: { fetchedAtMs: 1, windows: [{ kind: 'model_weekly:Fable', percentUsed: 83, resetsAt: '2099-01-01T00:00:00Z' }] },
+  })
+  mock.env(on, { APPDATA })
+  on('session.root', () => ({ value: 'E:\\Projects\\Alpha' }))
+  on('session.turns', () => ({ value: 0 }))
+  on('session.model', () => ({ value: 'claude-fable-5-1' }))
+  on('session.usage', () => ({ value: USAGE }))
+  const ui = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', ...BAND })
+  const drawn = JSON.stringify(await ui.drawn())
+  expect(drawn).not.toContain('83')
+  expect(drawn).toContain('"alt":"5 h limit: 23% (')
   await ui.unmount()
 })
 

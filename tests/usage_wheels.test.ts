@@ -159,8 +159,19 @@ test('the usage endpoint answer yields the 5-hour, weekly and Fable windows', ()
   ])
   expect(parseUsageEndpoint(null)).toEqual([])
   expect(parseUsageEndpoint({ limits: 'nope' })).toEqual([])
-  const merged = mergeWindows([{ kind: 'five_hour', percentUsed: 9 }], parseUsageEndpoint(ENDPOINT_ANSWER))
+  const merged = mergeWindows([{ kind: 'five_hour', percentUsed: 9 }], parseUsageEndpoint(ENDPOINT_ANSWER), NOW, NOW - 1_000)
   expect(merged.map(window => `${window.kind}=${window.percentUsed}`)).toEqual(['five_hour=9', 'seven_day=68', 'model_weekly:Fable=50'])
+})
+
+test('an idle session keeps its last turn figures, so a newer endpoint answer wins', () => {
+  const session = [
+    { kind: 'five_hour', percentUsed: 91 },
+    { kind: 'seven_day', percentUsed: 30 },
+  ]
+  const merged = mergeWindows(session, parseUsageEndpoint(ENDPOINT_ANSWER), NOW - 3_600_000, NOW)
+  expect(merged.map(window => `${window.kind}=${window.percentUsed}`)).toEqual(['five_hour=4', 'seven_day=68', 'model_weekly:Fable=50'])
+  // Never a turn in this process: the endpoint wins whenever it has answered.
+  expect(mergeWindows(session, [{ kind: 'five_hour', percentUsed: 4 }], 0, NOW).map(window => window.percentUsed)).toEqual([4, 30])
 })
 
 test('the model ring takes the session model family, else the first model window', () => {

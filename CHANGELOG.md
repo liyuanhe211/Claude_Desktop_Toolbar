@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.4 — 2026-10-15
+
+- Tried and withdrawn: submitting a short turn from the toolbar itself so that an idle conversation moves right away. The desktop app applies a move only at a turn you send, not one a plugin submits, so the turn cost quota and moved nothing. An idle conversation still shows `Moving after your next message...` and waits.
+
+## 0.9.3 — 2026-10-15
+
+- After you switch accounts, the usage rings no longer show the previous account's figures (such as the old Fable percentage) for up to a minute. A session now ignores any shared endpoint answer cached before it started and reads the endpoint itself.
+
+## 0.9.2 — 2026-10-15
+
+- An idle or finished session no longer leaves the 5-hour and weekly rings at the figures from its last turn. The rings now show whichever is fresher, the session's own reading or the shared endpoint answer.
+- The folder list has no down arrow (`Desktop_Style_Patch/User_Overrides.css`).
+- Picking a folder no longer raises a toast when the toolbar already shows the outcome (the folder list or the pending-move note); a declined or failed move still does.
+
 ## 0.9.1 — 2026-10-15
 
 - A move the desktop app has not made yet appears in grey beside the folder list as `→ Python_Lib Moving after your next message...` (or `Moving when this turn ends...` during a turn), with cycling dots. The note clears once the session is in that folder. Instead of "Moving", the toast says when the move applies.

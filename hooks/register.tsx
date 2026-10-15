@@ -79,7 +79,6 @@ function describeError(error: unknown): string {
 function moveAfterTurnMessage(folder: string): string {
   return `After this conversation turn is complete, move the working directory to ${folder}.`
 }
-
 async function resolveConfigDirectory($: EngineInterface): Promise<string> {
   const configured = await $.env.get('CLAUDE_CONFIG_DIR')
   if (configured) {
@@ -344,23 +343,29 @@ function whenMoveApplies(isWorking: boolean): string {
   return isWorking ? 'when this turn ends' : 'after your next message'
 }
 
-// Returns what happened, for a toast or a command's output.
-async function openFolder($: EngineInterface, folder: string, isWorking: boolean): Promise<string> {
+// What happened, for a command's output; `isShownInToolbar` when the toolbar
+// already shows it (the folder list or the pending-move note), so no toast.
+type FolderOpening = { message: string; isShownInToolbar: boolean }
+
+async function openFolder($: EngineInterface, folder: string, isWorking: boolean): Promise<FolderOpening> {
   const target = normalizeFolder(folder)
   await recordFolder($, target).catch(() => undefined)
   const hasStarted = await hasConversationStarted($, isWorking)
   const outcome = await moveSession($, target)
   if (outcome.isMoved) {
     await markPendingMove($, target).catch(() => undefined)
-    return hasStarted
+    // A turn a plugin submits does not make the desktop app apply the move;
+    // only a message the person sends does.
+    const message = hasStarted
       ? `This conversation moves to ${target} ${whenMoveApplies(isWorking)}`
       : `This conversation starts in ${target}`
+    return { message, isShownInToolbar: true }
   }
   if (outcome.isDeclined) {
-    return `The move to ${target} was declined`
+    return { message: `The move to ${target} was declined`, isShownInToolbar: false }
   }
   if (!hasStarted) {
-    return `Could not open ${target}: ${outcome.reason}`
+    return { message: `Could not open ${target}: ${outcome.reason}`, isShownInToolbar: false }
   }
 
   // A running conversation may refuse the move; leave the model a note to
@@ -371,15 +376,22 @@ async function openFolder($: EngineInterface, folder: string, isWorking: boolean
     })
     .catch((error: unknown) => ({ deny: describeError(error) }))
   if ('deny' in appended) {
-    return `Could not move to ${target}: ${outcome.reason}`
+    return { message: `Could not move to ${target}: ${outcome.reason}`, isShownInToolbar: false }
   }
   await markPendingMove($, target).catch(() => undefined)
 
-  return `Could not move now (${outcome.reason}); Claude will move to ${target} after this turn`
+  return {
+    message: `Could not move now (${outcome.reason}); Claude will move to ${target} after this turn`,
+    isShownInToolbar: true,
+  }
 }
 
+// Toasts only what the toolbar does not show: a failed or declined move.
 async function openFolderWithToast($: EngineInterface, folder: string, isWorking: boolean): Promise<void> {
-  $.ui.toast(await openFolder($, folder, isWorking))
+  const opening = await openFolder($, folder, isWorking)
+  if (!opening.isShownInToolbar) {
+    $.ui.toast(opening.message)
+  }
 }
 
 // `/folder <name or path>`: the toolbar is drawn only once a session exists,
@@ -397,7 +409,7 @@ async function runFolderCommand($: EngineInterface, query: string): Promise<stri
     return `${folder} does not exist`
   }
 
-  return openFolder($, folder, false)
+  return (await openFolder($, folder, false)).message
 }
 
 async function pickFolder($: EngineInterface, initialFolder: string | undefined): Promise<string | null> {
@@ -468,7 +480,7 @@ function readUsageEndpointCache(value: unknown): UsageEndpointCache | null {
     return null
   }
   const cache = value as { fetchedAtMs?: unknown; windows?: unknown }
-  if (typeof cache.fetchedAtMs !== 'number' || !Array.isArray(cache.windows)) {
+  if (typeof cache.fetchedAtMs !== 'number' || !Array.isArray(cache.windows) || cache.fetchedAtMs < processStartedAtMs) {
     return null
   }
   const windows = cache.windows.filter(
@@ -480,8 +492,20 @@ function readUsageEndpointCache(value: unknown): UsageEndpointCache | null {
 }
 
 // Module variables start over on a hot reload, as the timers do.
+// The shared cache does not say whose account it read, and switching accounts
+// starts the sessions over, so an answer from before this process may be
+// another account's: it is neither shown nor taken as fresh.
+const processStartedAtMs = Date.now()
 let latestSessionUsage: UsageSnapshot | null = null
 let usageEndpointRequest: Promise<void> | null = null
+// The session's window readings come from response headers, so they are fresh
+// only during a turn and as it ends; 0 before any turn of this process.
+let isTurnRunning = false
+let lastTurnCompletedAtMs = 0
+
+function sessionWindowsReadAtMs(): number {
+  return isTurnRunning ? Date.now() : lastTurnCompletedAtMs
+}
 
 // The plan's usage windows, the Fable weekly quota among them, from the same
 // endpoint the engine's /usage reads. Every session shares one cached answer,
@@ -520,8 +544,8 @@ async function refreshUsageEndpoint($: EngineInterface, maximumAgeMs: number): P
   return usageEndpointRequest
 }
 
-// The snapshot the widgets draw: the session's context and header windows,
-// with the endpoint's windows added. Not written to state from a render.
+// The snapshot the widgets draw: the session's context, and the header and
+// endpoint windows, the fresher first. Not written to state from a render.
 async function composeUsage($: EngineInterface): Promise<UsageSnapshot | null> {
   if (latestSessionUsage === null) {
     latestSessionUsage = usageSnapshot(await $.session.usage())
@@ -530,7 +554,7 @@ async function composeUsage($: EngineInterface): Promise<UsageSnapshot | null> {
 
   return {
     context: latestSessionUsage.context,
-    rateLimits: mergeWindows(latestSessionUsage.rateLimits, cached?.windows ?? []),
+    rateLimits: mergeWindows(latestSessionUsage.rateLimits, cached?.windows ?? [], sessionWindowsReadAtMs(), cached?.fetchedAtMs ?? 0),
   }
 }
 
@@ -684,6 +708,7 @@ export const register: Register = on => {
   // A session moved by the desktop app, the model or this toolbar records its
   // new folder at the next turn boundary.
   on('turn.start', async ($, e, next) => {
+    isTurnRunning = true
     await recordCurrentFolder($).catch(() => undefined)
     await settlePendingMove($).catch(() => undefined)
 
@@ -691,6 +716,8 @@ export const register: Register = on => {
   })
 
   on('turn.complete', async ($, e, next) => {
+    isTurnRunning = false
+    lastTurnCompletedAtMs = Date.now()
     const result = await next(e)
     await recordCurrentFolder($).catch(() => undefined)
     await settlePendingMove($).catch(() => undefined)
