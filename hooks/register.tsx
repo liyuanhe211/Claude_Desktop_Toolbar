@@ -64,6 +64,11 @@ const recentFoldersState = { plugin: 'conversation-toolbar', key: 'recentFolders
 const usageAtom = atom({ plugin: 'conversation-toolbar', key: 'usage' } as const, null as UsageSnapshot | null)
 // Whether the usage detail row stays open (toggled by the token-count button).
 const usageDetailsPinnedAtom = atom({ plugin: 'conversation-toolbar', key: 'usageDetailsPinned' } as const, false)
+// The folder a move is waiting to reach, and the dots of its note.
+const pendingMoveAtom = atom({ plugin: 'conversation-toolbar', key: 'pendingMove' } as const, null as string | null)
+const movingDotsAtom = atom({ plugin: 'conversation-toolbar', key: 'movingDots' } as const, 1)
+const MOVING_DOTS_MAXIMUM = 6
+const MOVING_DOTS_INTERVAL_MS = 400
 
 type MoveOutcome = { isMoved: true } | { isMoved: false; reason: string; isDeclined: boolean }
 
@@ -289,6 +294,56 @@ async function hasConversationStarted($: EngineInterface, isWorking: boolean): P
   return isWorking || (await $.session.turns()) > 0
 }
 
+// Module variables start over on a hot reload; session.start restarts the
+// dots of a move still pending.
+let movingDotsTimer: ReturnType<EngineInterface['clock']['every']> | null = null
+
+function startMovingDots($: EngineInterface): void {
+  if (movingDotsTimer === null) {
+    movingDotsTimer = $.clock.every(MOVING_DOTS_INTERVAL_MS, () =>
+      void update($, movingDotsAtom, dots => ((dots ?? 1) % MOVING_DOTS_MAXIMUM) + 1),
+    )
+  }
+}
+
+function stopMovingDots(): void {
+  movingDotsTimer?.cancel()
+  movingDotsTimer = null
+}
+
+// The desktop app moves the session when a turn ends, not at once: the toolbar
+// shows the target beside the folder list until the session is there.
+async function markPendingMove($: EngineInterface, target: string): Promise<void> {
+  const root = normalizeFolder(await $.session.root().catch(() => ''))
+  if (folderIdentity(root) === folderIdentity(target)) {
+    await update($, pendingMoveAtom, () => null)
+    stopMovingDots()
+    return
+  }
+  await update($, pendingMoveAtom, () => target)
+  startMovingDots($)
+}
+
+// Clears the pending move once the session has reached it.
+async function settlePendingMove($: EngineInterface): Promise<void> {
+  const pending = await read($, pendingMoveAtom)
+  if (pending === null) {
+    stopMovingDots()
+    return
+  }
+  const root = normalizeFolder(await $.session.root())
+  if (folderIdentity(root) === folderIdentity(pending)) {
+    await update($, pendingMoveAtom, () => null)
+    stopMovingDots()
+  } else {
+    startMovingDots($)
+  }
+}
+
+function whenMoveApplies(isWorking: boolean): string {
+  return isWorking ? 'when this turn ends' : 'after your next message'
+}
+
 // Returns what happened, for a toast or a command's output.
 async function openFolder($: EngineInterface, folder: string, isWorking: boolean): Promise<string> {
   const target = normalizeFolder(folder)
@@ -296,7 +351,10 @@ async function openFolder($: EngineInterface, folder: string, isWorking: boolean
   const hasStarted = await hasConversationStarted($, isWorking)
   const outcome = await moveSession($, target)
   if (outcome.isMoved) {
-    return hasStarted ? `Moving this conversation to ${target}` : `This conversation starts in ${target}`
+    await markPendingMove($, target).catch(() => undefined)
+    return hasStarted
+      ? `This conversation moves to ${target} ${whenMoveApplies(isWorking)}`
+      : `This conversation starts in ${target}`
   }
   if (outcome.isDeclined) {
     return `The move to ${target} was declined`
@@ -315,6 +373,7 @@ async function openFolder($: EngineInterface, folder: string, isWorking: boolean
   if ('deny' in appended) {
     return `Could not move to ${target}: ${outcome.reason}`
   }
+  await markPendingMove($, target).catch(() => undefined)
 
   return `Could not move now (${outcome.reason}); Claude will move to ${target} after this turn`
 }
@@ -608,7 +667,13 @@ export const register: Register = on => {
     // seconds, so the context bar follows each response within a turn; the
     // plan windows from the shared endpoint cache once a minute.
     void refreshUsageEndpoint($, USAGE_ENDPOINT_INTERVAL_MS - 5_000).then(() => refreshSessionUsage($))
-    $.clock.every(SESSION_USAGE_INTERVAL_MS, () => void refreshSessionUsage($))
+    // A move still pending from before a reload gets its dots back; the same
+    // cheap check every few seconds clears the note once the session is there.
+    void settlePendingMove($).catch(() => undefined)
+    $.clock.every(SESSION_USAGE_INTERVAL_MS, () => {
+      void refreshSessionUsage($)
+      void settlePendingMove($).catch(() => undefined)
+    })
     $.clock.every(USAGE_ENDPOINT_INTERVAL_MS, () =>
       void refreshUsageEndpoint($, USAGE_ENDPOINT_INTERVAL_MS - 5_000).then(() => publishUsage($)),
     )
@@ -620,6 +685,7 @@ export const register: Register = on => {
   // new folder at the next turn boundary.
   on('turn.start', async ($, e, next) => {
     await recordCurrentFolder($).catch(() => undefined)
+    await settlePendingMove($).catch(() => undefined)
 
     return next(e)
   })
@@ -627,6 +693,7 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
     await recordCurrentFolder($).catch(() => undefined)
+    await settlePendingMove($).catch(() => undefined)
     // A turn spends quota: ask the endpoint again unless another session just did.
     void refreshUsageEndpoint($, 15_000).then(() => refreshSessionUsage($))
 
@@ -714,6 +781,19 @@ export const register: Register = on => {
       { value: BROWSE_OPTION, label: 'Browse…' },
     ]
     const isWorking = e.props.isWorking
+    // A move the desktop app has not made yet: "→ Python_Lib  Moving after
+    // your next message..." in grey beside the list, the dots cycling. The
+    // dots are padded with no-break spaces so the row does not shift.
+    const pendingMove = await read($, pendingMoveAtom)
+    const isMovePending = pendingMove !== null && folderIdentity(pendingMove) !== folderIdentity(root)
+    const movingDots = '.'.repeat(await read($, movingDotsAtom)).padEnd(MOVING_DOTS_MAXIMUM, ' ')
+    const pendingMoveNote = isMovePending ? (
+      <Box key="pending-move" flexDirection="row" columnGap={1} alignItems="center">
+        <Text dimColor>→</Text>
+        <Text dimColor bold>{folderOptionLabel(pendingMove, labelWidth)}</Text>
+        <Text dimColor>{`Moving ${whenMoveApplies(isWorking)}${movingDots}`}</Text>
+      </Box>
+    ) : null
 
     return (
       <Box flexDirection="column" width="100%">
@@ -732,6 +812,7 @@ export const register: Register = on => {
               }
             }}
           />
+          {pendingMoveNote}
         </Box>
         <Box flexDirection="row" columnGap={2} alignItems="center">
           {copyButton}

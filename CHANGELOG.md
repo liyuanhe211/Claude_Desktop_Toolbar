@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.1 — 2026-10-15
+
+- A move the desktop app has not made yet appears in grey beside the folder list as `→ Python_Lib Moving after your next message...` (or `Moving when this turn ends...` during a turn), with cycling dots. The note clears once the session is in that folder. Instead of "Moving", the toast says when the move applies.
+
 ## 0.9.0 — 2026-10-15
 
 - First public release: marketplace file, license, README with install steps.

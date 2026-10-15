@@ -16,6 +16,11 @@ declare module 'claude-code' {
       recentFolders: RecentFolderList
       usage: UsageSnapshot | null
       usageDetailsPinned: boolean
+      // The folder a move was asked for that the session has not reached yet
+      // (the desktop app moves it when a turn ends); null when none is pending.
+      pendingMove: string | null
+      // How many dots the pending-move note draws now, 1 to 6, cycling.
+      movingDots: number
     }
   }
 }

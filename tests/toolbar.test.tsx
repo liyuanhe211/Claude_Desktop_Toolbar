@@ -86,7 +86,8 @@ test('picking a folder moves the session there and records it first', async ($, 
   mock.store(on, { recentFolders: STORED_FOLDERS, isSeededFromDesktopSessions: true })
   mock.env(on, { APPDATA })
   const session = mock.session(on)
-  on('session.root', () => ({ value: 'E:\\Projects\\Alpha' }))
+  let root = 'E:\\Projects\\Alpha'
+  on('session.root', () => ({ value: root }))
   on('session.turns', () => ({ value: 0 }))
   const moves: unknown[] = []
   on('mcp.call', ($, e) => {
@@ -95,6 +96,7 @@ test('picking a folder moves the session there and records it first', async ($, 
     return { value: { content: [{ type: 'text', text: 'Moved' }], isError: false } }
   })
   const ui = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', ...BAND })
+  expect(await ui.find({ key: 'pending-move' })).toBeUndefined()
   await ui.select({ key: 'recent-folders', value: 'E:\\Projects\\Beta' })
   expect(moves).toEqual([
     { server: 'ccd_directory', tool: 'change_directory', args: { path: 'E:\\Projects\\Beta' } },
@@ -102,7 +104,19 @@ test('picking a folder moves the session there and records it first', async ($, 
   const options = (await ui.find({ key: 'recent-folders' }))?.props.options as { value: string }[]
   expect(options.map(option => option.value)).toEqual(['E:\\Projects\\Beta', 'E:\\Projects\\Alpha', '<browse for a folder>'])
   expect(session.appended()).toEqual([])
+  // The desktop app moves the session when a turn ends: until then the list
+  // keeps the current folder and a grey note names the target.
+  expect((await ui.find({ key: 'recent-folders' }))?.props.value).toBe('E:\\Projects\\Alpha')
+  const pending = JSON.stringify(await ui.find({ key: 'pending-move' }))
+  expect(pending).toContain('→')
+  expect(pending).toContain('Beta')
+  expect(pending).toContain('Moving after your next message.')
   await ui.unmount()
+  // Once the session is in the target folder the note is gone.
+  root = 'E:\\Projects\\Beta'
+  const moved = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', ...BAND })
+  expect(await moved.find({ key: 'pending-move' })).toBeUndefined()
+  await moved.unmount()
 })
 
 test('a move refused during a turn leaves the model a note to move afterwards', async ($, on) => {
@@ -128,6 +142,7 @@ test('a move refused during a turn leaves the model a note to move afterwards', 
   expect(texts).toEqual([
     'After this conversation turn is complete, move the working directory to E:\\Projects\\Beta.',
   ])
+  expect(JSON.stringify(await ui.find({ key: 'pending-move' }))).toContain('Moving when this turn ends.')
   await ui.unmount()
 })
 
@@ -143,6 +158,7 @@ test('a declined move leaves no note', async ($, on) => {
   const ui = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', ...BAND })
   await ui.select({ key: 'recent-folders', value: 'E:\\Projects\\Beta' })
   expect(session.appended()).toEqual([])
+  expect(await ui.find({ key: 'pending-move' })).toBeUndefined()
   await ui.unmount()
 })
 
