@@ -97,9 +97,13 @@ test('one blinking clock per waiting Monitor at 1/2 of the dot rate, with its co
   ]
   expect(monitorSummary(monitors)).toBe('Waiting on 2 monitors')
   expect(monitorLines(monitors, 120_000)).toEqual([
-    'Monitor: log tail (waiting 1 min 0 s, no deadline)',
-    'Monitor: round-29 harvest (waiting 2 min 0 s, stops in 28 min 0 s)',
+    'Monitor: log tail (no deadline)',
+    'Monitor: round-29 harvest (stops in 28m)',
   ])
+  // Within one countdown minute the drawing stays the same, so a redraw keeps the frame.
+  const drawnAt = (nowMs: number) => monitorClocksSvg(monitors, monitorLines(monitors, nowMs).join('\n'), nowMs)
+  expect(drawnAt(120_500)).toBe(drawnAt(179_000))
+  expect(drawnAt(180_500)).not.toBe(drawnAt(179_000))
   const svg = monitorClocksSvg(monitors, 'Waiting on 2 monitors', 120_000)
   expect(svg.match(/<circle /g)).toHaveLength(2)
   expect(svg).toContain('dur="2.4s"')

@@ -1,7 +1,16 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, McpToolResult, Register } from 'claude-code'
 
-import type { MonitorRecord, RecentFolderList, SubagentRecord, UsageSnapshot, UsageWindow } from '../types'
+import type {
+  CopyFeedback,
+  ExternalButtonRecord,
+  ExternalButtonState,
+  MonitorRecord,
+  RecentFolderList,
+  SubagentRecord,
+  UsageSnapshot,
+  UsageWindow,
+} from '../types'
 import {
   findFolder,
   folderIdentity,
@@ -60,6 +69,18 @@ import {
   recordMonitorEnd,
   recordMonitorStart,
 } from './monitor_clock'
+import {
+  BUTTON_FILE_SUFFIX,
+  BUTTON_FOLDER_NAME,
+  BUTTON_SUBFOLDER_NAME,
+  EXTERNAL_BUTTON_POLL_MS,
+  ExternalButton,
+  PRESS_FILE_SUFFIX,
+  buttonRecords,
+  isAnimating,
+  pressNote,
+  type ButtonFile,
+} from './external_buttons'
 
 type CopySurface = Parameters<EngineInterface['ui']['copy']>[0]['surface']
 
@@ -114,6 +135,19 @@ const monitorsAtom = atom({ plugin: 'conversation-toolbar', key: 'monitors' } as
 // A waiting clock's countdown in minutes redraws this often; in its last
 // minute, every poll.
 const MONITOR_COUNTDOWN_REFRESH_MS = 10_000
+// The Copy Transcript Path button says how the copy went for this long.
+const copyFeedbackAtom = atom({ plugin: 'conversation-toolbar', key: 'copyFeedback' } as const, null as CopyFeedback | null)
+const COPY_FEEDBACK_DURATION_MS = 2_000
+const COPY_BUTTON_LABELS: Record<CopyFeedback | 'idle', string> = {
+  idle: 'Copy Transcript Path',
+  copied: 'Copied ✓',
+  failed: 'Copy failed',
+}
+
+// Buttons other programs ask for through the button folder, and the frame
+// their dots draw.
+const NO_EXTERNAL_BUTTONS: ExternalButtonState = { buttons: [], frame: 0 }
+const externalButtonsAtom = atom({ plugin: 'conversation-toolbar', key: 'externalButtons' } as const, NO_EXTERNAL_BUTTONS)
 
 type MoveOutcome = { isMoved: true } | { isMoved: false; reason: string; isDeclined: boolean }
 
@@ -190,12 +224,28 @@ async function copyToClipboard(
   return result?.exitCode === 0
 }
 
+// Module variables start over on a hot reload; a feedback left showing then
+// clears at the next press.
+let copyFeedbackTimer: ReturnType<EngineInterface['clock']['after']> | null = null
+
+// The button itself says how the copy went, so a press always shows something
+// where the user is looking; the toast carries the path.
+async function showCopyFeedback($: EngineInterface, feedback: CopyFeedback): Promise<void> {
+  copyFeedbackTimer?.cancel()
+  await update($, copyFeedbackAtom, () => feedback)
+  copyFeedbackTimer = $.clock.after(COPY_FEEDBACK_DURATION_MS, () => {
+    copyFeedbackTimer = null
+    void update($, copyFeedbackAtom, () => null)
+  })
+}
+
 async function copyTranscriptPath($: EngineInterface, surface?: CopySurface): Promise<string> {
   const path = await resolveTranscriptPath($)
   const isCopied = await copyToClipboard($, path, surface)
   const message = isCopied
     ? `Copied transcript path: ${path}`
     : `Could not copy; the transcript path is ${path}`
+  await showCopyFeedback($, isCopied ? 'copied' : 'failed').catch(() => undefined)
   $.ui.toast(message)
 
   return message
@@ -729,6 +779,93 @@ function monitorTooltip(active: readonly MonitorRecord[], nowMs: number): string
   return [monitorSummary(active), ...monitorLines(active, nowMs)].join('\n')
 }
 
+async function resolveButtonFolder($: EngineInterface): Promise<string | undefined> {
+  const temporary = (await $.env.get('TEMP').catch(() => undefined)) || (await $.env.get('TMP').catch(() => undefined))
+
+  return temporary ? joinWindowsPath(temporary, BUTTON_FOLDER_NAME, BUTTON_SUBFOLDER_NAME) : undefined
+}
+
+// Module variables start over on a hot reload; every turn boundary and draw
+// makes sure the button folder is polled.
+let externalButtonTimer: ReturnType<EngineInterface['clock']['every']> | null = null
+let isReadingExternalButtons = false
+
+function ensureExternalButtonPolling($: EngineInterface): void {
+  if (externalButtonTimer === null) {
+    externalButtonTimer = $.clock.every(EXTERNAL_BUTTON_POLL_MS, () => void refreshExternalButtons($))
+    void refreshExternalButtons($)
+  }
+}
+
+// Reads the button folder (only the files there, usually none) and writes the
+// buttons when they changed, or every poll while one animates: each poll moves
+// the dots one frame on, so a late timer never skips a frame.
+async function refreshExternalButtons($: EngineInterface): Promise<void> {
+  if (isReadingExternalButtons) {
+    return
+  }
+  isReadingExternalButtons = true
+  try {
+    const folder = await resolveButtonFolder($)
+    const entries = folder === undefined ? [] : await $.fs.list(folder).catch(() => [])
+    const pressFileNames = new Set(
+      entries.filter(entry => entry.kind === 'file' && entry.name.endsWith(PRESS_FILE_SUFFIX)).map(entry => entry.name),
+    )
+    const files: ButtonFile[] = []
+    for (const entry of entries) {
+      if (folder === undefined || entry.kind !== 'file' || !entry.name.endsWith(BUTTON_FILE_SUFFIX)) {
+        continue
+      }
+      // The program may delete the file between the list and the read.
+      const text = await $.fs.read(joinWindowsPath(folder, entry.name)).catch(() => undefined)
+      if (typeof text === 'string') {
+        files.push({ name: entry.name, mtimeMs: entry.mtimeMs, text })
+      }
+    }
+    const records = files.length === 0 ? [] : buttonRecords(files, pressFileNames, await $.session.id(), Date.now())
+    const current = (await read($, externalButtonsAtom)) ?? NO_EXTERNAL_BUTTONS
+    const isUnchanged = JSON.stringify(current.buttons) === JSON.stringify(records)
+    if (isUnchanged && !isAnimating(records)) {
+      return
+    }
+    // Buttons that just appeared start at the first frame (three dots).
+    const frame = current.buttons.length === 0 || !isAnimating(records) ? 0 : current.frame + 1
+    await update($, externalButtonsAtom, () => ({ buttons: records, frame }))
+    $.ui.invalidate('ui.render')
+  } catch (error: unknown) {
+    $.ui.log(`Reading the toolbar button folder failed: ${describeError(error)}`, { to: 'debug' })
+  } finally {
+    isReadingExternalButtons = false
+  }
+}
+
+// A press writes the button's press file for its program, and the button
+// shows its pressed label until the program removes it.
+async function pressExternalButton($: EngineInterface, record: ExternalButtonRecord): Promise<void> {
+  if (record.isPressed) {
+    return
+  }
+  const folder = await resolveButtonFolder($)
+  if (folder === undefined) {
+    $.ui.toast(`Could not press ${record.label}: TEMP is not set`)
+    return
+  }
+  try {
+    const button = ExternalButton.fromRecord(record)
+    await $.fs.write(joinWindowsPath(folder, button.pressFileName), pressNote(await $.session.id(), Date.now()))
+    await update($, externalButtonsAtom, state => {
+      const current = state ?? NO_EXTERNAL_BUTTONS
+      return {
+        ...current,
+        buttons: current.buttons.map(shown => (shown.id === record.id ? { ...shown, isPressed: true } : shown)),
+      }
+    })
+    $.ui.invalidate('ui.render')
+  } catch (error: unknown) {
+    $.ui.toast(`Could not press ${record.label}: ${describeError(error)}`)
+  }
+}
+
 // The desktop app's own pane of background tasks, opened through the app's
 // session MCP server; a surface without it (the terminal) gets a toast.
 async function openBackgroundTasksPane($: EngineInterface): Promise<void> {
@@ -743,8 +880,8 @@ async function openBackgroundTasksPane($: EngineInterface): Promise<void> {
   }
 }
 
-function subagentTooltip(records: readonly SubagentRecord[], nowMs: number): string {
-  const lines = subagentLines(records, nowMs)
+function subagentTooltip(records: readonly SubagentRecord[]): string {
+  const lines = subagentLines(records)
   const shown = lines.slice(0, SUBAGENT_TOOLTIP_LINE_LIMIT)
   const more = lines.length > shown.length ? [`… ${lines.length - shown.length} more`] : []
   return [subagentSummary(records), ...shown, ...more].join('\n')
@@ -872,6 +1009,7 @@ export const register: Register = on => {
     )
     // The subagent dots follow the engine's agent list (a local read).
     ensureSubagentPolling($)
+    ensureExternalButtonPolling($)
 
     return next(e)
   })
@@ -932,6 +1070,7 @@ export const register: Register = on => {
   on('turn.start', async ($, e, next) => {
     isTurnRunning = true
     ensureSubagentPolling($)
+    ensureExternalButtonPolling($)
     await recordCurrentFolder($).catch(() => undefined)
     await settlePendingMove($).catch(() => undefined)
 
@@ -987,10 +1126,11 @@ export const register: Register = on => {
 
     const elements = $.ui.resolve(e)
     const { Box, Button, Text } = elements
+    const copyFeedback = (await read($, copyFeedbackAtom)) ?? 'idle'
     const copyButton = (
       <Button
         key="copy-transcript-path"
-        label="Copy Transcript Path"
+        label={COPY_BUTTON_LABELS[copyFeedback]}
         variant="secondary"
         onPress={press => void copyTranscriptPath($, press.surface)}
       />
@@ -1007,7 +1147,25 @@ export const register: Register = on => {
     // idle moment raises no turn: the first draw starts the poll and the
     // transcript read (their writes come after this draw).
     ensureSubagentPolling($)
+    ensureExternalButtonPolling($)
     const monitors = activeMonitors((await read($, monitorsAtom)) ?? [])
+    // Buttons other programs asked for, after the dots; a press writes the
+    // button's press file for its program.
+    const externalButtons = (await read($, externalButtonsAtom)) ?? NO_EXTERNAL_BUTTONS
+    const externalButtonRow =
+      externalButtons.buttons.length > 0 ? (
+        <Box key="external-buttons" flexDirection="row" columnGap={1}>
+          {externalButtons.buttons.map(record => (
+            <Button
+              key={`external-button-${record.id}`}
+              label={ExternalButton.fromRecord(record).text(externalButtons.frame, record.isPressed)}
+              variant="secondary"
+              dimColor={record.isPressed}
+              onPress={() => void pressExternalButton($, record)}
+            />
+          ))}
+        </Box>
+      ) : null
     let subagentIndicator = null
     if (subagents.length > 0 || monitors.length > 0) {
       // An Svg takes no press and a Button holds no Svg, so a one-glyph plain
@@ -1040,7 +1198,7 @@ export const register: Register = on => {
             {subagents.length > 0 ? (
               <Box key="subagent-dot-row">
                 <Svg
-                  source={subagentDotsSvg(subagents, subagentTooltip(subagents, nowMs))}
+                  source={subagentDotsSvg(subagents, subagentTooltip(subagents))}
                   alt={subagentSummary(subagents)}
                   width={subagentDotsWidth(subagents)}
                   height={DOTS_HEIGHT_PX}
@@ -1066,6 +1224,7 @@ export const register: Register = on => {
         <Box flexDirection="column">
           <Box flexDirection="row" columnGap={1}>
             {subagentIndicator}
+            {externalButtonRow}
             {copyButton}
             {usageParts.row}
           </Box>
@@ -1135,6 +1294,7 @@ export const register: Register = on => {
           />
           {pendingMoveNote}
           {subagentIndicator}
+          {externalButtonRow}
         </Box>
         <Box flexDirection="row" columnGap={2} alignItems="center">
           {copyButton}

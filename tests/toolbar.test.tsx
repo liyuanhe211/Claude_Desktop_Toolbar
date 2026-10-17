@@ -244,6 +244,97 @@ test('/folder with a name moves to the matching recent folder', async ($, on) =>
   )
 })
 
+test('pressing Copy Transcript Path says Copied on the button for a moment', async ($, on) => {
+  mock.store(on, { recentFolders: STORED_FOLDERS, isSeededFromDesktopSessions: true })
+  mock.env(on, { APPDATA, USERPROFILE: 'C:\\Users\\Someone' })
+  const clock = mock.clock(on)
+  on('session.id', () => ({ value: 'session-1' }))
+  on('session.cwd', () => ({ value: 'E:\\Projects\\Alpha' }))
+  on('session.root', () => ({ value: 'E:\\Projects\\Alpha' }))
+  on('session.turns', () => ({ value: 0 }))
+  on('fs.exists', () => ({ value: true }))
+  const copied: string[] = []
+  on('ui.copy', ($, e) => {
+    copied.push(e.text)
+
+    return { value: { isCopied: true } }
+  })
+  const toasts: string[] = []
+  on('ui.toast', ($, e) => {
+    toasts.push(e.text)
+
+    return { value: undefined }
+  })
+  const ui = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', ...BAND })
+  expect((await ui.find({ key: 'copy-transcript-path' }))?.props.label).toBe('Copy Transcript Path')
+  await ui.press({ key: 'copy-transcript-path' })
+  await clock.advance(0)
+  expect(copied).toHaveLength(1)
+  expect(copied[0]).toContain('.jsonl')
+  expect(toasts).toEqual([`Copied transcript path: ${copied[0]}`])
+  expect((await ui.find({ key: 'copy-transcript-path' }))?.props.label).toBe('Copied ✓')
+  await clock.advance(2_000)
+  expect((await ui.find({ key: 'copy-transcript-path' }))?.props.label).toBe('Copy Transcript Path')
+  await ui.unmount()
+})
+
+test('a button another program asks for shows with cycling dots, and a press writes its press file', async ($, on) => {
+  const folder = 'D:\\Temp\\claude_desktop_toolbar\\buttons'
+  const buttonPath = `${folder}\\report_export_42.json`
+  mock.store(on, { recentFolders: STORED_FOLDERS, isSeededFromDesktopSessions: true })
+  mock.env(on, { APPDATA, TEMP: 'D:\\Temp' })
+  const clock = mock.clock(on)
+  on('session.id', () => ({ value: 'session-1' }))
+  on('session.root', () => ({ value: 'E:\\Projects\\Alpha' }))
+  on('session.turns', () => ({ value: 1 }))
+  let entries = [{ name: 'report_export_42.json', kind: 'file' as const, size: 100, mtimeMs: Date.now(), isLink: false }]
+  on('fs.list', ($, e) => ({ value: e.path === folder ? entries : [] }))
+  on('fs.read', ($, e) => ({
+    value:
+      e.path === buttonPath
+        ? JSON.stringify({
+            label: 'Exporting report',
+            animation: 'dots',
+            pressed_label: 'Cancelling export',
+            session_id: 'session-1',
+            expires_at_ms: Date.now() + 600_000,
+          })
+        : '',
+  }))
+  const writes: { path: string; text: string }[] = []
+  on('fs.write', ($, e) => {
+    writes.push({ path: e.path, text: e.text })
+
+    return { value: undefined }
+  })
+  for (const surface of ['desktop', 'terminal'] as const) {
+    entries = [{ name: 'report_export_42.json', kind: 'file' as const, size: 100, mtimeMs: Date.now(), isLink: false }]
+    writes.length = 0
+    const ui = await $.ui.mount({ plugin: PLUGIN, surface, ...BAND })
+    await clock.advance(0)
+    await clock.advance(500)
+    const key = 'external-button-report_export_42'
+    const first = (await ui.find({ key }))?.props.label as string
+    expect(first.startsWith('Exporting report ')).toBe(true)
+    await clock.advance(500)
+    const second = (await ui.find({ key }))?.props.label as string
+    expect(second).not.toBe(first)
+    expect(second.trimEnd().length).toBeLessThanOrEqual('Exporting report ...'.length)
+
+    await ui.press({ key })
+    await clock.advance(0)
+    expect(writes.map(write => write.path)).toEqual([`${folder}\\report_export_42.pressed`])
+    expect(JSON.parse(writes[0]?.text ?? '{}').session_id).toBe('session-1')
+    expect(((await ui.find({ key }))?.props.label as string).startsWith('Cancelling export')).toBe(true)
+
+    // The program removes its button once the press has done its work.
+    entries = []
+    await clock.advance(500)
+    expect(await ui.find({ key })).toBeUndefined()
+    await ui.unmount()
+  }
+})
+
 test('the toolbar yields while an agent transcript is in view', async ($, on) => {
   on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
     const { Box } = $.ui.resolve(e)
@@ -336,7 +427,7 @@ test('a waiting Monitor shows a blinking clock left of the dots until it is stop
   await $.tool.call({ tool: 'Monitor', description: 'round-29 harvest', timeout_ms: 1_800_000, command: 'python watch.py' })
   const drawn = JSON.stringify(await ui.drawn())
   expect(drawn).toContain('"alt":"Waiting on 1 monitor"')
-  expect(drawn).toContain('Monitor: round-29 harvest (waiting')
+  expect(drawn).toContain('Monitor: round-29 harvest (stops in 30m)')
   expect(drawn).toContain('dur=\\"2.4s\\"')
   expect(drawn).toContain('>30m</text>')
   expect(drawn).toContain('open-background-tasks')

@@ -162,11 +162,14 @@ export function formatElapsed(durationMs: number): string {
   return `${Math.floor(minutes / 60)} h ${minutes % 60} min`
 }
 
-// One line per subagent, newest first: "Running  Explore: Find the config (2 min 5 s)".
-export function subagentLines(records: readonly SubagentRecord[], nowMs: number): string[] {
+// One line per subagent, newest first: "Running  Explore: Find the config",
+// an ended one with its run time, "Completed  Explore: Find the config (2 min 5 s)".
+// No running clock: the desktop app reloads the frame of an Svg whose source
+// changed, and every band redraw would make the dots flash.
+export function subagentLines(records: readonly SubagentRecord[]): string[] {
   return [...records].reverse().map(record => {
-    const elapsed = formatElapsed((record.endedAtMs ?? nowMs) - record.startedAtMs)
-    return `${STATE_LABELS[record.state]}  ${record.type}: ${record.description} (${elapsed})`
+    const line = `${STATE_LABELS[record.state]}  ${record.type}: ${record.description}`
+    return record.endedAtMs === undefined ? line : `${line} (${formatElapsed(record.endedAtMs - record.startedAtMs)})`
   })
 }
 

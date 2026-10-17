@@ -1,7 +1,7 @@
 {
   "name": "conversation-toolbar",
-  "version": "0.13.0",
-  "description": "A toolbar above the prompt: open or move the conversation to one of the 100 most recent folders, browse for a folder, subagent status dots, waiting clocks with countdowns for Monitors, copy the transcript path, usage widgets (model weekly ring, context bar, 5-hour ring, weekly ring); /folder <name> does the same from the first message",
+  "version": "0.14.1",
+  "description": "A toolbar above the prompt: open or move the conversation to one of the 100 most recent folders, browse for a folder, subagent status dots, waiting clocks with countdowns for Monitors, buttons other programs ask for, copy the transcript path, usage widgets (model weekly ring, context bar, 5-hour ring, weekly ring); /folder <name> does the same from the first message",
   "author": { "name": "Yuanhe Li" },
   "license": "MIT",
   "keywords": ["toolbar", "folders", "transcript", "usage", "rate-limits", "context", "windows", "desktop"],

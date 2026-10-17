@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.14.1 — 2026-10-16
+
+- The subagent dots and the Monitor clocks no longer flash while the toolbar redraws frequently (every 0.5 s while a program's button cycles its dots). The desktop app reloads the frame of a drawing whose content changed, and their tooltips held times that changed every second. A running subagent's tooltip line now omits the running time (an ended one keeps its run time), and a Monitor's line shows the time left as its clock's countdown, `(stops in 27m)`.
+
+## 0.14.0 — 2026-10-16
+
+- Other programs can show a button in the toolbar by writing a small JSON file into `%TEMP%\claude_desktop_toolbar\buttons`. The button sits right of the subagent dots, its label can change at any time, and three dots can cycle after it. A press writes a `.pressed` file beside it for the program to act on, and the button shows its pressed label until the program removes it.
+
+## 0.13.1 — 2026-10-16
+
+- Pressing **Copy Transcript Path** now shows feedback on the button itself: it reads `Copied ✓` (or `Copy failed`) for 2 s, then reverts to its own label. The toast with the full path stays.
+
 ## 0.13.0 — 2026-10-15
 
 - Each waiting clock shows the time left before its Monitor expires on its right: whole minutes rounded up (`12m`), seconds in the last minute (`45s`), `∞` for a Monitor without a deadline. The countdown redraws every 10 s, and every 2 s in the last minute.

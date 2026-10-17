@@ -38,6 +38,25 @@ export type MonitorRecord = {
   outcome?: string
 }
 
+// The outcome of the last Copy Transcript Path press, shown on the button.
+export type CopyFeedback = 'copied' | 'failed'
+
+// How a button another program asked for moves: `dots` cycles three dots after its label.
+export type ExternalButtonAnimation = 'dots' | 'none'
+
+// A button another program asked for through the button folder.
+export type ExternalButtonRecord = {
+  id: string
+  label: string
+  animation: ExternalButtonAnimation
+  pressedLabel: string
+  // Pressed and waiting for the program to remove it.
+  isPressed: boolean
+}
+
+// The buttons drawn now, newest first, and the animation frame they draw.
+export type ExternalButtonState = { buttons: ExternalButtonRecord[]; frame: number }
+
 declare module 'claude-code' {
   interface PluginState {
     'conversation-toolbar': {
@@ -54,6 +73,11 @@ declare module 'claude-code' {
       subagents: SubagentRecord[]
       // This session's Monitors, at most 20, the newest last.
       monitors: MonitorRecord[]
+      // What the Copy Transcript Path button says for a moment after a press;
+      // null shows its own label.
+      copyFeedback: CopyFeedback | null
+      // Buttons other programs ask for, with their frame.
+      externalButtons: ExternalButtonState
     }
   }
 }

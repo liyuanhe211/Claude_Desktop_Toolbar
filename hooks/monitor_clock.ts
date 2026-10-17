@@ -1,5 +1,5 @@
 import type { MonitorRecord } from '../types'
-import { DOTS_HEIGHT_PX, SUBAGENT_COLORS, escapeXml, formatElapsed } from './subagent_dots'
+import { DOTS_HEIGHT_PX, SUBAGENT_COLORS, escapeXml } from './subagent_dots'
 
 // The waiting clocks: one clock per Monitor of the main conversation that is
 // still watching, so a conversation idle on a Monitor does not look finished.
@@ -232,13 +232,14 @@ export function monitorSummary(active: readonly MonitorRecord[]): string {
   return `Waiting on ${active.length} monitor${active.length === 1 ? '' : 's'}`
 }
 
-// One line per waiting Monitor, newest first: "Monitor: round-29 harvest (waiting 3 min 2 s, stops in 26 min 58 s)".
+// One line per waiting Monitor, newest first: "Monitor: round-29 harvest (stops in 27m)".
+// The time left is the clock's own countdown, so the tooltip changes only when
+// the countdown does: the desktop app reloads the frame of an Svg whose source
+// changed, and every band redraw would make the clocks flash.
 export function monitorLines(active: readonly MonitorRecord[], nowMs: number): string[] {
   return [...active].reverse().map(record => {
-    const waited = formatElapsed(nowMs - record.startedAtMs)
-    const remaining =
-      record.deadlineMs === undefined ? 'no deadline' : `stops in ${formatElapsed(Math.max(0, record.deadlineMs - nowMs))}`
-    return `Monitor: ${record.description} (waiting ${waited}, ${remaining})`
+    const remaining = record.deadlineMs === undefined ? 'no deadline' : `stops in ${monitorCountdown(record, nowMs)}`
+    return `Monitor: ${record.description} (${remaining})`
   })
 }
 

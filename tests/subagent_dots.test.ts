@@ -85,7 +85,8 @@ test('summary, tooltip lines and terminal text', async () => {
     { ...record('c', 'running'), startedAtMs: 10_000 },
   ]
   expect(subagentSummary(records)).toBe('Subagents: 1 running, 1 completed, 1 failed')
-  expect(subagentLines(records, 70_000)[0]).toBe('Running  Explore: task c (1 min 0 s)')
-  expect(subagentLines(records, 70_000)[2]).toBe('Completed  Explore: task a (2 min 5 s)')
+  // A running subagent's line has no clock, so the dots' source stays the same between redraws.
+  expect(subagentLines(records)[0]).toBe('Running  Explore: task c')
+  expect(subagentLines(records)[2]).toBe('Completed  Explore: task a (2 min 5 s)')
   expect(subagentText(records)).toBe('Agents 1 running · 1 done · 1 failed')
 })
