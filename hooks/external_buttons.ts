@@ -42,7 +42,11 @@ export class ExternalButton {
     readonly sessionId: string,
     readonly expiresAtMs: number,
     readonly writtenAtMs: number,
-  ) {}
+  ) {
+    this.pressFileName = `${id}${PRESS_FILE_SUFFIX}`
+  }
+
+  readonly pressFileName: string
 
   // The button a file asks for, or null for a file that is not one.
   static parse(file: ButtonFile): ExternalButton | null {
@@ -84,10 +88,6 @@ export class ExternalButton {
 
   isShownIn(sessionId: string, nowMs: number): boolean {
     return (this.sessionId === '' || this.sessionId === sessionId) && nowMs <= this.expiresAtMs
-  }
-
-  get pressFileName(): string {
-    return `${this.id}${PRESS_FILE_SUFFIX}`
   }
 
   // The text drawn now. Dots run `...`, `.`, `..` and are padded with no-break

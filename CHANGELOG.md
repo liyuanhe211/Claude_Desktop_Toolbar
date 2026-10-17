@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.2 — 2026-10-16
+
+- Ready for the plugin directory: the README states every program the plugin starts, every tool it calls, the one network request, and what it reads and writes; the usage endpoint's address is written at its call; a plugin icon.
+
 ## 0.14.1 — 2026-10-16
 
 - The subagent dots and the Monitor clocks no longer flash while the toolbar redraws frequently (every 0.5 s while a program's button cycles its dots). The desktop app reloads the frame of a drawing whose content changed, and their tooltips held times that changed every second. A running subagent's tooltip line now omits the running time (an ended one keeps its run time), and a Monitor's line shows the time left as its clock's countdown, `(stops in 27m)`.

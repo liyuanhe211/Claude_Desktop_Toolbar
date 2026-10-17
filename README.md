@@ -87,12 +87,37 @@ To update later, run `claude plugin marketplace update` and then `claude plugin 
 
 To run a local copy instead, name its folder in `CLAUDE_CODE_PLUGIN_DIRS` in the `env` block of `~/.claude/settings.json` (paths separated by `;` on Windows), or start Claude Code with `--plugin-dir <folder>`.
 
-## Data and privacy
+## What the plugin runs, reads, writes and sends
 
-- **Recent folders** live in the plugin's own store under the Claude Code configuration directory, shared by all sessions on the machine. Every session's starting folder, every folder picked here, and every folder a session is moved to goes to the front; scratch workspaces, session worktrees and temporary folders are never recorded.
-- **First load**: the folders of the desktop app's own session records (`%APPDATA%\Claude\claude-code-sessions`) fill the list once. Only the folder paths are read.
-- **Usage**: the context and the 5-hour and weekly windows come from the session itself. The model-scoped weekly quota comes from `https://api.anthropic.com/api/oauth/usage`, the endpoint Claude Code's `/usage` reads, called with the session's own authorization through the engine. Nothing is sent anywhere else.
-- **Program buttons**: the toolbar reads only the button folder under `%TEMP%`, and a press writes only the `.pressed` file there.
+Everything below happens on your machine, except the one network request named under **Network**.
+
+**Programs it starts** (Windows PowerShell, `powershell.exe`, and nothing else):
+
+- **Browse…** runs the plugin's own script `scripts/Pick_Folder.ps1` (`powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -STA -File <plugin>\scripts\Pick_Folder.ps1 -Title … [-InitialFolder <folder>]`) to show the Windows folder picker. The script only shows the dialog and prints the folder you picked.
+- **Copy Transcript Path** first asks Claude Code to copy the path. Only where the surface cannot (the desktop app may refuse), it runs `powershell -NoProfile -NonInteractive -Command "[Console]::InputEncoding = [System.Text.Encoding]::UTF8; Set-Clipboard -Value ([Console]::In.ReadToEnd())"` with the path on standard input, which puts the path on the Windows clipboard.
+
+**Tools it calls itself** (only on your click, both tools of the Claude desktop app):
+
+- `ccd_directory` › `change_directory`, when you pick a folder in the list, to open or move the conversation there. The desktop app asks you to approve the folder unless permissions are bypassed.
+- `ccd_view` › `show_pane` with `{ pane: "tasks" }`, when you press `↗`, to open the **Background tasks** pane.
+
+**Network**: one request, `GET https://api.anthropic.com/api/oauth/usage`, the endpoint Claude Code's `/usage` reads, with the session's own authorization handled by the engine (the plugin never sees the token). It runs about once a minute and after a turn, and only reads the plan's usage figures. Nothing from the conversation, your files or your folders is sent anywhere.
+
+**What it reads**:
+
+- The desktop app's session records under `%APPDATA%\Claude\claude-code-sessions`, once, for their folder paths only, to fill the folder list the first time.
+- The folder names of `~/.claude/projects`, to find this conversation's transcript path.
+- This conversation's transcript (`.jsonl`), once per load, to find the Monitors still waiting; it stays on your machine.
+- The button folder `%TEMP%\claude_desktop_toolbar\buttons`, every half second, for buttons other programs ask for.
+- The session's own figures (context, rate limits, model, subagent list) through Claude Code.
+
+**What it writes**:
+
+- Its own store and session state under the Claude Code configuration directory: the recent folders, the cached usage reading, and the records of the dots and clocks. The store is shared by all sessions on the machine. Every session's starting folder, every folder picked here, and every folder a session is moved to goes to the front of the list; scratch workspaces, session worktrees and temporary folders are never recorded.
+- A `<id>.pressed` file in `%TEMP%\claude_desktop_toolbar\buttons` when you press a program's button, holding the time and the session id. Only the program that asked for the button reads it; it is not a build, start-up, settings or instruction file.
+- When a move to another folder is refused during a turn, one user message in the conversation: "After this conversation turn is complete, move the working directory to <folder>."
+
+**Hooks**: `session.start` registers `/copy-transcript-path` and `/folder` and starts the timers; `agent.spawn`, `turn.start`, `turn.complete` and `session.measure` update the dots, the folder list and the usage; `tool.call` on `Monitor` and `TaskStop` and `prompt.submit` with task notifications start and end the Monitor clocks. Every hook passes the event on unchanged: the plugin does not alter prompts, tool calls, their results or the system prompt.
 
 ## Layout
 

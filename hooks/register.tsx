@@ -89,8 +89,6 @@ const STORE_KEY_IS_SEEDED = 'isSeededFromDesktopSessions'
 const STORE_KEY_USAGE_ENDPOINT = 'usageEndpoint'
 // The plan usage endpoint the engine's /usage reads (five_hour, seven_day and
 // the model-scoped weekly windows in limits[]); the bearer header is the engine's.
-const USAGE_ENDPOINT_URL = 'https://api.anthropic.com/api/oauth/usage'
-const USAGE_ENDPOINT_BETA = 'oauth-2025-04-20'
 const USAGE_ENDPOINT_INTERVAL_MS = 60_000
 const SESSION_USAGE_INTERVAL_MS = 5_000
 // The value in the folder list that opens the folder picker.
@@ -619,9 +617,10 @@ async function refreshUsageEndpoint($: EngineInterface, maximumAgeMs: number): P
       if (authorization === null) {
         return
       }
-      const response = await $.http.fetch(USAGE_ENDPOINT_URL, {
+      // The endpoint Claude Code's /usage reads, with the session's own authorization.
+      const response = await $.http.fetch('https://api.anthropic.com/api/oauth/usage', {
         auth: authorization.handle,
-        headers: { 'Content-Type': 'application/json', 'anthropic-beta': USAGE_ENDPOINT_BETA },
+        headers: { 'Content-Type': 'application/json', 'anthropic-beta': 'oauth-2025-04-20' },
       })
       if (!response.ok) {
         $.ui.log(`The usage endpoint answered ${response.status}`, { to: 'debug' })
