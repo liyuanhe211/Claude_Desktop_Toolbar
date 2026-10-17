@@ -113,7 +113,7 @@ Everything below happens on your machine, except the one network request named u
 
 **What it writes**:
 
-- Its own store and session state under the Claude Code configuration directory: the recent folders, the cached usage reading, and the records of the dots and clocks. The store is shared by all sessions on the machine. Every session's starting folder, every folder picked here, and every folder a session is moved to goes to the front of the list; scratch workspaces, session worktrees and temporary folders are never recorded.
+- It keeps its own store and session state under the Claude Code configuration directory, including recent folders, the cached usage reading, and records of the dots and clocks. All sessions on the machine share the store. Each session's starting folder, any folder picked here, and any folder a session moves to is added to the front of the list. Scratch workspaces, session worktrees, and temporary folders are never recorded.
 - A `<id>.pressed` file in `%TEMP%\claude_desktop_toolbar\buttons` when you press a program's button, holding the time and the session id. Only the program that asked for the button reads it; it is not a build, start-up, settings or instruction file.
 - When a move to another folder is refused during a turn, one user message in the conversation: "After this conversation turn is complete, move the working directory to <folder>."
 

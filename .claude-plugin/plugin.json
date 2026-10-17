@@ -1,9 +1,11 @@
 {
   "name": "conversation-toolbar",
-  "version": "0.14.2",
+  "version": "0.14.3",
   "description": "A toolbar above the prompt: open or move the conversation to one of the 100 most recent folders, browse for a folder, subagent status dots, waiting clocks with countdowns for Monitors, buttons other programs ask for, copy the transcript path, usage widgets (model weekly ring, context bar, 5-hour ring, weekly ring); /folder <name> does the same from the first message",
   "author": { "name": "Yuanhe Li" },
   "license": "MIT",
+  "homepage": "https://github.com/liyuanhe211/Claude_Desktop_Toolbar",
+  "privacyPolicyUrl": "https://github.com/liyuanhe211/Claude_Desktop_Toolbar#what-the-plugin-runs-reads-writes-and-sends",
   "keywords": ["toolbar", "folders", "transcript", "usage", "rate-limits", "context", "windows", "desktop"],
   "types": "./types/index.d.ts"
 }

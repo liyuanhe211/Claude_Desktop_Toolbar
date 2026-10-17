@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.3 — 2026-10-16
+
+- `plugin.json` names the homepage and a privacy policy URL: the README section on what the plugin runs, reads, writes and sends.
+
 ## 0.14.2 — 2026-10-16
 
 - Ready for the plugin directory: the README states every program the plugin starts, every tool it calls, the one network request, and what it reads and writes; the usage endpoint's address is written at its call; a plugin icon.
