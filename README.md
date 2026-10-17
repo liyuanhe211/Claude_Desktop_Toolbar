@@ -2,7 +2,7 @@
 
 A Claude Code plugin (a hooks-module mod) that draws one row above the prompt, in the Claude desktop app's Code tab and in the terminal: a recent-folder list, status dots for the conversation's subagents, a button that copies the transcript path, and live usage widgets for the context window and the plan's rate limits.
 
-![The toolbar above the prompt: subagents finishing, the context growing, a ring's tooltip, the pinned details, Copy Transcript Path and the folder list](docs/Toolbar_Preview.svg)
+![The toolbar above the prompt: a Monitor's clock counting down, subagents finishing, the context growing, a ring's tooltip, the pinned details, Copy Transcript Path answering Copied, and the folder list](docs/Toolbar_Preview.svg)
 
 ## Features
 
@@ -10,8 +10,10 @@ A Claude Code plugin (a hooks-module mod) that draws one row above the prompt, i
 | --- | --- |
 | Folder list | Shows the current folder by its name alone (`my-project`; "No folder" in a scratch workspace) and lists the most recently used folders: the 64 newest of the 100 the plugin remembers, because Claude Code refuses a Select with more options. Picking one starts the conversation there before the first prompt, or moves the session there afterwards. A name too long for the row keeps its end behind an ellipsis. |
 | **Browse…** (last entry of the folder list) | Opens the Windows folder picker at the most recently used folder rather than the user profile. The picked folder is used and recorded the same way. |
-| Subagent dots | One dot per subagent of this conversation, oldest left, shown once the first one starts. Running dots pulse in orange, one after another; finished ones are green, failed ones red, stopped ones a grey ring (also a subagent that ended without a known result). A subagent that waits is a slowly pulsing orange ring, a teammate between turns a still one. Hover for a summary and one line per subagent, newest first: state, type, task and duration. The newest 12 show, `+n` counting the older ones; the history keeps 50. The `↗` button right of the dots opens the desktop app's **Background tasks** pane, which lists the subagents with their tasks; in the terminal it only shows a toast. The pane also counts shell commands as tasks, so its count is higher than the number of dots. |
-| **Copy Transcript Path** | Copies the path of this conversation's transcript (`.jsonl`) to the clipboard. Also available as `/copy-transcript-path`. |
+| Subagent dots | One dot per subagent of this conversation, oldest left, shown once the first one starts. Running dots pulse in orange, one after another; finished ones are green, failed ones red, stopped ones a grey ring (also a subagent that ended without a known result). A subagent that waits is a slowly pulsing orange ring, a teammate between turns a still one. Hover for a summary and one line per subagent, newest first: state, type, task, and for an ended one its duration. The newest 12 show, `+n` counting the older ones; the history keeps 50. The `↗` button right of the dots opens the desktop app's **Background tasks** pane, which lists the subagents with their tasks; in the terminal it only shows a toast. The pane also counts shell commands as tasks, so its count is higher than the number of dots. |
+| Monitor clocks | One orange clock per Monitor still watching, left of the subagent dots, blinking at half the rate of a running dot, with the time left before the Monitor expires on its right: whole minutes rounded up (`12m`), seconds in the last minute (`45s`), `∞` for a Monitor without a deadline. A conversation that ended its turn with a Monitor still watching looks idle in the desktop sidebar; the clock shows that it is still waiting. Hover for one line per Monitor with its time left. The newest 6 show. |
+| Program buttons | Buttons that other programs on the machine ask for, right of the subagent dots, shown only while the program wants them. A long-running script, for example, can show `Exporting report ...` with the dots cycling, and a press asks it to stop. See [Buttons for other programs](#buttons-for-other-programs). |
+| **Copy Transcript Path** | Copies the path of this conversation's transcript (`.jsonl`) to the clipboard; the button reads `Copied ✓` for 2 s. Also available as `/copy-transcript-path`. |
 | Usage widgets (right end) | Left to right: a ring for the model's weekly quota (for example Fable), the token count, a context bar full at 500k tokens, a ring for the 5-hour limit and a ring for the weekly limit. Each ring shows its whole percentage inside. |
 
 ### Usage widgets
@@ -38,20 +40,50 @@ The desktop app draws the row only after a session exists, so a new conversation
 
 Moving uses the desktop app's own `change_directory` tool, so the app asks to approve the folder unless permissions are bypassed. The desktop app applies a move only at a turn you drive: during a running turn it waits for that turn to end; in an idle conversation it waits for your next message (a turn the toolbar itself submits does not count, so the toolbar does not try). Until then the list keeps the current folder, and a grey note beside it names the target, `→ Python_Lib  Moving after your next message...`, with its dots cycling. The note clears once the session is there. If the move is refused while a turn is running, the toolbar adds a note asking Claude to move the working directory once the turn is complete.
 
-## Requirements
+### Buttons for other programs
 
+A program shows a button by writing `<id>.json` into `%TEMP%\claude_desktop_toolbar\buttons` (the id is letters, digits, `_`, `-` and `.`), and removes it by deleting the file. The toolbar reads the folder every half second.
+
+```json
+{
+  "label": "Exporting report",
+  "animation": "dots",
+  "pressed_label": "Cancelling export",
+  "session_id": "<the conversation's session id>",
+  "expires_at_ms": 1792184415315
+}
+```
+
+- `label` is required. Rewrite the file to change it; write a temporary file and rename it so the toolbar never reads half a file.
+- `animation: "dots"` cycles `...`, `.`, `..` after the label; leave it out for a still label.
+- `session_id` limits the button to one conversation; leave it out to show it in every conversation.
+- `expires_at_ms` hides a button the program never removed; without it, the button hides 10 minutes after the file's last write.
+- A press writes `<id>.pressed` beside the file. The program watches for it, does what the press means, and deletes both files. Until then the button shows `pressed_label`.
+- At most four buttons show, the newest files first.
+
+## Requirements
 - **Windows.** The folder picker is a PowerShell script, and the folder handling expects Windows paths.
 - **Claude Code 2.1.275 or later**, which loads hooks-module plugins and installs them from a marketplace in one step. The Claude desktop app's Code tab runs a bundled Claude Code and draws the toolbar too.
 
 ## Install
 
-In a terminal Claude Code session, type:
+This repository is a one-plugin marketplace. In a terminal Claude Code session, type:
 
 ```
-/plugin install conversation-toolbar --marketplace <owner>/<repo>
+/plugin install conversation-toolbar --marketplace liyuanhe211/Claude_Desktop_Toolbar
 ```
 
-Answer `y` to add the marketplace, then pick the user scope with Enter. The plugin is active in that session at once and in every session started afterwards, including the desktop app's Code tab. The desktop app's own prompt does not accept `/plugin`, so install from a terminal.
+Answer `y` to add the marketplace, then pick the user scope with Enter. The plugin is active in that session at once and in every session started afterwards, including the desktop app's Code tab.
+
+From a shell:
+
+```
+claude plugin install conversation-toolbar --marketplace liyuanhe211/Claude_Desktop_Toolbar
+```
+
+In the desktop app, where the prompt does not accept `/plugin`: click **+** next to the prompt box, then **Plugins**, **Add marketplace** with `liyuanhe211/Claude_Desktop_Toolbar`, then **Add plugin**.
+
+To update later, run `claude plugin marketplace update` and then `claude plugin update conversation-toolbar`, or use the same **Plugins** menu.
 
 To run a local copy instead, name its folder in `CLAUDE_CODE_PLUGIN_DIRS` in the `env` block of `~/.claude/settings.json` (paths separated by `;` on Windows), or start Claude Code with `--plugin-dir <folder>`.
 
@@ -60,6 +92,7 @@ To run a local copy instead, name its folder in `CLAUDE_CODE_PLUGIN_DIRS` in the
 - **Recent folders** live in the plugin's own store under the Claude Code configuration directory, shared by all sessions on the machine. Every session's starting folder, every folder picked here, and every folder a session is moved to goes to the front; scratch workspaces, session worktrees and temporary folders are never recorded.
 - **First load**: the folders of the desktop app's own session records (`%APPDATA%\Claude\claude-code-sessions`) fill the list once. Only the folder paths are read.
 - **Usage**: the context and the 5-hour and weekly windows come from the session itself. The model-scoped weekly quota comes from `https://api.anthropic.com/api/oauth/usage`, the endpoint Claude Code's `/usage` reads, called with the session's own authorization through the engine. Nothing is sent anywhere else.
+- **Program buttons**: the toolbar reads only the button folder under `%TEMP%`, and a press writes only the `.pressed` file there.
 
 ## Layout
 
@@ -69,6 +102,7 @@ To run a local copy instead, name its folder in `CLAUDE_CODE_PLUGIN_DIRS` in the
 - `hooks/folder_list.ts`: path handling and the recent-folder list, with no engine calls
 - `hooks/subagent_dots.ts`: the subagent records and their dots, with no engine calls
 - `hooks/usage_wheels.ts`: the usage figures, their text and the SVG rings and bar, with no engine calls
+- `hooks/external_buttons.ts`: the `ExternalButton` class for buttons other programs ask for, with no engine calls
 - `scripts/Pick_Folder.ps1`: the folder picker Browse runs
 - `types/index.d.ts`: the `$.state` contract
 - `tests/`: `claude plugin test` suites
